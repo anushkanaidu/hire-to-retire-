@@ -43,6 +43,7 @@ import {
   Area
 } from 'recharts';
 import {motion, AnimatePresence} from 'motion/react';
+import { jsPDF } from 'jspdf';
 import {parseEmployeeData} from './data/mockData';
 import {Employee, Country} from './types';
 import {cn} from './lib/utils';
@@ -181,6 +182,126 @@ export default function App() {
     ];
   }, [filteredData]);
 
+  const generateReport = () => {
+    const doc = new jsPDF();
+    const now = new Date();
+    const timestamp = now.toLocaleString();
+    const region = selectedCountry === 'All' ? 'Global' : selectedCountry;
+
+    // Header
+    doc.setTextColor(225, 29, 72); // #e11d48
+    doc.setFontSize(22);
+    doc.setFont("helvetica", "bold");
+    doc.text("OpsCore", 105, 20, { align: "center" });
+
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(16);
+    doc.text("OpsCore Operations Report", 105, 30, { align: "center" });
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Generated: ${timestamp}`, 20, 45);
+    doc.text(`Region: ${region}`, 20, 50);
+
+    doc.setLineWidth(0.5);
+    doc.line(20, 55, 190, 55);
+
+    // Key Metrics
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "bold");
+    doc.text("KEY METRICS", 20, 65);
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    const metrics = [
+        `Total Employees: ${stats.total}`,
+        `BGV At Risk: ${stats.bgvAtRisk}`,
+        `BGV Overdue: ${stats.bgvOverdue}`,
+        `Avg Compliance: ${stats.complianceAvg}%`,
+        `High Flight Risk: ${stats.highFlightRisk}`,
+        `Non-Compliant: ${stats.pendingOnboarding}`
+    ];
+    metrics.forEach((m, i) => doc.text(m, 25, 75 + (i * 7)));
+
+    // BGV Overdue Table
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "bold");
+    doc.text("TOP BGV OVERDUE CASES", 20, 125);
+
+    doc.setFontSize(8);
+    const overdueHeaders = ["Name", "Country", "Agency", "Days"];
+    doc.text(overdueHeaders[0], 25, 135);
+    doc.text(overdueHeaders[1], 75, 135);
+    doc.text(overdueHeaders[2], 115, 135);
+    doc.text(overdueHeaders[3], 165, 135);
+    doc.line(25, 137, 185, 137);
+
+    overdueEmployees.slice(0, 10).forEach((emp, i) => {
+        const y = 145 + (i * 6);
+        doc.text(`${emp.firstname} ${emp.lastname}`, 25, y);
+        doc.text(emp.country, 75, y);
+        doc.text(emp.bgv_agency, 115, y);
+        doc.text(emp.bgv_days_elapsed.toString(), 165, y);
+    });
+
+    // Training Compliance
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "bold");
+    doc.text("TRAINING COMPLIANCE", 20, 210);
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    trainingStats.forEach((stat, i) => {
+        const rate = Math.round((stat.yes / (stat.assigned || 1)) * 100);
+        doc.text(`${stat.name}: ${stat.yes} / ${stat.assigned} (${rate}%)`, 25, 220 + (i * 7));
+    });
+
+    // Admin Owners
+    doc.addPage();
+    doc.setTextColor(225, 29, 72);
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "bold");
+    doc.text("DEFAULT ACTION OWNERS", 20, 20);
+
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    const owners = [
+        ["BGV At Risk", "Compliance Director"],
+        ["High Flight Risk", "BU Managing Director"],
+        ["Training Gap", "L&D Manager"],
+        ["Onboarding Incomplete", "HR BP"]
+    ];
+    owners.forEach((o, i) => {
+        doc.text(`${o[0]}`, 25, 30 + (i * 7));
+        doc.text(`→ ${o[1]}`, 100, 30 + (i * 7));
+    });
+
+    doc.save(`OpsCore_Report_${region.replace(/\s+/g, '_')}_${now.toISOString().split('T')[0]}.pdf`);
+    triggerToast('PDF Report Generated Successfully');
+  };
+
+  const hiringStats = useMemo(() => {
+    return {
+      applied: filteredData.filter(e => e.recruitment_status === 'Applied').length,
+      interviewing: filteredData.filter(e => e.recruitment_status === 'Interviewing').length,
+      offered: filteredData.filter(e => e.recruitment_status === 'Offered').length,
+      rejected: filteredData.filter(e => e.recruitment_status === 'Rejected').length,
+      inReview: filteredData.filter(e => e.recruitment_status === 'In Review').length
+    };
+  }, [filteredData]);
+
+  const riskJurisdictionData = useMemo(() => {
+    const regions = ['US', 'UK', 'Singapore', 'India'];
+    return regions.map(r => {
+      const regionData = filteredData.filter(e => e.country === r);
+      const highRiskCount = regionData.filter(e => e.flight_risk === 'High Risk').length;
+      const totalInRegion = regionData.length;
+      const vol = highRiskCount / (totalInRegion || 1) > 0.4 ? 'High' : highRiskCount / (totalInRegion || 1) > 0.2 ? 'Medium' : 'Low';
+      return { r, risk: highRiskCount, vol, trend: 'down' }; // trend can stay flat/down for demo
+    });
+  }, [filteredData]);
+
   const totalPages = Math.ceil(filteredData.length / rowsPerPage);
 
   const triggerToast = (msg: string) => {
@@ -289,7 +410,10 @@ export default function App() {
             
             <div className="h-6 w-[1px] bg-[#1f1f1f]"></div>
             
-            <button className="text-[10px] font-black px-5 py-2 rounded-lg transition-all uppercase tracking-widest bg-[#e11d48] text-white hover:bg-[#f43f5e]">
+            <button 
+              onClick={generateReport}
+              className="text-[10px] font-black px-5 py-2 rounded-lg transition-all uppercase tracking-widest bg-[#e11d48] text-white hover:bg-[#f43f5e]"
+            >
               Generate Report
             </button>
             <button 
@@ -363,11 +487,15 @@ export default function App() {
                          </div>
                          <div className="flex items-center justify-between relative px-4">
                             <div className="absolute top-1/2 left-0 w-full h-[1px] bg-[#1f1f1f] -translate-y-1/2 -z-0"></div>
-                            <PipelineStage label="Pre-boarding" status="clear" delay={stats.delays.pre} icon={<Users className="w-4 h-4" />} />
-                            <PipelineStage label="Onboarding" status="risk" delay={stats.delays.on} icon={<Briefcase className="w-4 h-4" />} />
-                            <PipelineStage label="Compliance" status="critical" delay={stats.delays.comp} icon={<ShieldAlert className="w-4 h-4" />} />
-                            <PipelineStage label="Production" status="clear" delay={stats.delays.prod} icon={<BarChart3 className="w-4 h-4" />} />
-                            <PipelineStage label="Exit" status="clear" delay={stats.delays.exit} icon={<LogOut className="w-4 h-4" />} />
+                            <PipelineStage label="Intake" status="clear" delay="1d" icon={<Users className="w-3 h-3" />} />
+                            <PipelineStage label="Interview" status="clear" delay="3d" icon={<Briefcase className="w-3 h-3" />} />
+                            <PipelineStage label="Offered" status="clear" delay="2d" icon={<Sparkles className="w-3 h-3" />} />
+                            <PipelineStage label="Pre-boarding" status="clear" delay={stats.delays.pre} icon={<Clock className="w-3 h-3" />} />
+                            <PipelineStage label="Day 0" status="risk" delay="1d" icon={<TrendingUp className="w-3 h-3" />} />
+                            <PipelineStage label="Orientation" status="clear" delay="1d" icon={<Globe className="w-3 h-3" />} />
+                            <PipelineStage label="Training" status="critical" delay={stats.delays.comp} icon={<ShieldAlert className="w-3 h-3" />} />
+                            <PipelineStage label="Production" status="clear" delay={stats.delays.prod} icon={<BarChart3 className="w-3 h-3" />} />
+                            <PipelineStage label="Exit" status="clear" delay={stats.delays.exit} icon={<LogOut className="w-3 h-3" />} />
                          </div>
                       </div>
 
@@ -592,10 +720,10 @@ export default function App() {
                             <button className="text-[10px] font-black text-[#e11d48] uppercase tracking-widest hover:underline transition-all">Export Funnel Metrics</button>
                          </div>
                          <div className="p-10 flex items-center justify-between border-b border-[#1f1f1f]">
-                            <FunnelMetric label="Applied" value="2.4k" color="text-white" />
-                            <FunnelMetric label="Interval" value="482" color="text-white" />
-                            <FunnelMetric label="Offered" value="96" color="text-[#e11d48]" />
-                            <FunnelMetric label="Onboard" value="12" color="text-emerald-500" />
+                            <FunnelMetric label="Applied" value={hiringStats.applied.toString()} color="text-white" />
+                            <FunnelMetric label="Interviewing" value={hiringStats.interviewing.toString()} color="text-white" />
+                            <FunnelMetric label="Offered" value={hiringStats.offered.toString()} color="text-[#e11d48]" />
+                            <FunnelMetric label="Rejected" value={hiringStats.rejected.toString()} color="text-emerald-500" />
                          </div>
                          <div className="p-0 overflow-x-auto">
                             <table className="w-full text-left">
@@ -754,12 +882,12 @@ export default function App() {
                    </div>
 
                    <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-8">
-                      <h3 className="text-xs font-black uppercase tracking-[0.2em] mb-8">System Deployment Protocol Checklist</h3>
+                      <h3 className="text-xs font-black uppercase tracking-[0.2em] mb-8">HR Onboarding & Compliance Checklist</h3>
                       <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-                         <CategorySection label="Environment" items={['Developer Setup', 'IDE Config', 'Git Profile']} />
-                         <CategorySection label="Compliance" items={['Security Audit', 'Access Logs', 'NDA Finalized']} />
-                         <CategorySection label="AI Academy" items={['Vertex AI Access', 'Gemini Workshop', 'Gemini UI Kit']} />
-                         <CategorySection label="Admin" items={['Asset Sync', 'SLA Contract', 'Budget Approval']} />
+                         <CategorySection label="Legal" items={['Employment Contract', 'NDA & Confidentiality', 'Background Verification']} />
+                         <CategorySection label="IT & Assets" items={['Hardware Provisioning', 'VPN & System Access', 'ID Badge Creation']} />
+                         <CategorySection label="Training" items={['Harassment Training', 'AI Ethics Workshop', 'Security Awareness']} />
+                         <CategorySection label="Culture" items={['Team Introduction', 'Company Roadmap', 'Benefit Enrollment']} />
                       </div>
                    </div>
                 </motion.div>
@@ -784,17 +912,12 @@ export default function App() {
                                    </tr>
                                 </thead>
                                 <tbody className="divide-y divide-[#1f1f1f] text-[10px]">
-                                   {[
-                                      { r: 'United States', risk: 82, vol: 'Low', trend: 'down' },
-                                      { r: 'United Kingdom', risk: 45, vol: 'Neutral', trend: 'flat' },
-                                      { r: 'Singapore', risk: 36, vol: 'Medium', trend: 'up' },
-                                      { r: 'India', risk: 43, vol: 'Low', trend: 'down' }
-                                   ].map(item => (
+                                   {riskJurisdictionData.map(item => (
                                       <tr key={item.r} className="hover:bg-white/5 transition-colors group">
                                          <td className="px-8 py-5 font-black text-white">{item.r}</td>
                                          <td className="px-8 py-5 text-center font-mono font-bold text-[#e11d48] group-hover:scale-110 transition-transform">{item.risk}</td>
                                          <td className="px-8 py-5 text-center">
-                                            <span className={`text-[9px] font-black uppercase tracking-tighter ${item.vol === 'Low' ? 'text-emerald-500' : item.vol === 'Medium' ? 'text-amber-500' : 'text-white'}`}>{item.vol} Vibe</span>
+                                            <span className={`text-[9px] font-black uppercase tracking-tighter ${item.vol === 'Low' ? 'text-emerald-500' : item.vol === 'Medium' ? 'text-amber-500' : 'text-[#e11d48]'}`}>{item.vol} Risk</span>
                                          </td>
                                          <td className="px-8 py-5 text-right">
                                             <span className={`font-mono font-bold ${item.trend === 'up' ? 'text-rose-500' : item.trend === 'down' ? 'text-emerald-500' : 'text-slate-500'}`}>
