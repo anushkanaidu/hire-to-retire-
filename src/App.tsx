@@ -1,4 +1,4 @@
-import {useState, useMemo} from 'react';
+import React, {useState, useMemo, useEffect} from 'react';
 import {
   LayoutDashboard,
   Users,
@@ -15,7 +15,16 @@ import {
   Filter,
   BarChart3,
   LogOut,
-  Mail
+  Mail,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  Send,
+  Sparkles, 
+  RefreshCw,
+  MoreVertical,
+  Activity,
+  FileWarning
 } from 'lucide-react';
 import {
   BarChart,
@@ -29,16 +38,28 @@ import {
   Pie,
   Cell,
   LineChart,
-  Line
+  Line,
+  AreaChart,
+  Area
 } from 'recharts';
 import {motion, AnimatePresence} from 'motion/react';
-import {RAW_EMPLOYEES} from './data/mockData';
+import {parseEmployeeData} from './data/mockData';
 import {Employee, Country} from './types';
 import {cn} from './lib/utils';
 import {generateLifecycleSummary} from './services/gemini';
-import { Sparkles, RefreshCw } from 'lucide-react';
 
-const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444'];
+const RED_ACCENT = '#e11d48';
+const DARK_BG = '#0a0a0a';
+const CARD_BG = '#111111';
+const BORDER_COLOR = '#1f1f1f';
+
+const COUNTRY_MAP: Record<string, Country | 'All'> = {
+  'All': 'All',
+  'US': 'US',
+  'UK': 'UK',
+  'SG': 'Singapore',
+  'IND': 'India'
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'overview' | 'hiring' | 'onboarding' | 'production' | 'exit'>('overview');
@@ -46,7 +67,41 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [aiReport, setAiReport] = useState<string | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
+  
+  const [currentPage, setCurrentPage] = useState(1);
+  const rowsPerPage = 10;
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [onboardingView, setOnboardingView] = useState<'summary' | 'employee'>('summary');
+  const [toast, setToast] = useState<string | null>(null);
 
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [errorVisible, setErrorVisible] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        setIsLoading(true);
+        const response = await fetch('/hire_to_retire_master.csv');
+        if (!response.ok) {
+          throw new Error('CSV file not found — please upload hire_to_retire_master.csv to the /public folder');
+        }
+        const text = await response.text();
+        console.log('CSV Data Preview (first 200 chars):', text.substring(0, 200));
+        const data = parseEmployeeData(text);
+        setEmployees(data);
+        setErrorVisible(null);
+      } catch (err) {
+        console.error('Failed to load data:', err);
+        setErrorVisible(err instanceof Error ? err.message : 'An unknown error occurred while loading the data.');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadData();
+  }, []);
+  
   const fetchAiReport = async () => {
     setIsAiLoading(true);
     const report = await generateLifecycleSummary(filteredData);
@@ -55,797 +110,1034 @@ export default function App() {
   };
 
   const filteredData = useMemo(() => {
-    return RAW_EMPLOYEES.filter(emp => {
+    return employees.filter(emp => {
       const countryMatch = selectedCountry === 'All' || emp.country === selectedCountry;
       const searchMatch = `${emp.firstname} ${emp.lastname}`.toLowerCase().includes(searchQuery.toLowerCase()) || 
                           emp.employee_id.toLowerCase().includes(searchQuery.toLowerCase());
       return countryMatch && searchMatch;
     });
-  }, [selectedCountry, searchQuery]);
+  }, [employees, selectedCountry, searchQuery]);
 
   const stats = useMemo(() => {
     const total = filteredData.length;
+    if (total === 0) return {
+      total: 0,
+      bgvAtRisk: 0,
+      bgvOverdue: 0,
+      complianceAvg: 0,
+      pendingOnboarding: 0,
+      highFlightRisk: 0,
+      avgDaysJoining: 0,
+      delays: { pre: '0d', on: '0d', comp: '0d', prod: '0d', exit: '0d' }
+    };
+
     const bgvAtRisk = filteredData.filter(e => e.bgv_at_risk === 'Yes').length;
-    const complianceAvg = filteredData.reduce((acc, curr) => acc + curr.compliance_pct, 0) / total;
+    const bgvOverdue = filteredData.filter(e => e.bgv_status === 'Overdue').length;
+    const complianceAvg = Math.round(filteredData.reduce((acc, e) => acc + (e.compliance_pct || 0), 0) / total * 10) / 10;
     const pendingOnboarding = filteredData.filter(e => e.onboarding_complete === 'No').length;
+    const highFlightRisk = filteredData.filter(e => e.flight_risk === 'High Risk').length;
+    const avgDaysJoining = Math.round(filteredData.reduce((acc, e) => acc + (e.days_since_joining || 0), 0) / total * 10) / 10;
 
-    return { total, bgvAtRisk, complianceAvg, pendingOnboarding };
+    return {
+      total,
+      bgvAtRisk,
+      bgvOverdue,
+      complianceAvg,
+      pendingOnboarding,
+      highFlightRisk,
+      avgDaysJoining,
+      delays: { pre: '0d', on: '2d', comp: '5d', prod: '0d', exit: '0d' }
+    };
   }, [filteredData]);
 
-  const countryDist = useMemo(() => {
-    const counts: Record<string, number> = {};
-    filteredData.forEach(e => counts[e.country] = (counts[e.country] || 0) + 1);
-    return Object.entries(counts).map(([name, value]) => ({ name, value }));
+  const headcountData = useMemo(() => {
+    const counts = { 'US': 0, 'UK': 0, 'Singapore': 0, 'India': 0 };
+    employees.forEach(e => {
+      if (counts[e.country as keyof typeof counts] !== undefined) {
+        counts[e.country as keyof typeof counts]++;
+      }
+    });
+    return Object.entries(counts).map(([country, count]) => ({ country, count }));
+  }, [employees]);
+
+  const overdueEmployees = useMemo(() => {
+    return filteredData
+      .filter(e => e.bgv_status === 'Overdue')
+      .sort((a, b) => (b.bgv_days_elapsed || 0) - (a.bgv_days_elapsed || 0));
   }, [filteredData]);
+
+  const paginatedData = useMemo(() => {
+    const start = (currentPage - 1) * rowsPerPage;
+    return filteredData.slice(start, start + rowsPerPage);
+  }, [filteredData, currentPage]);
+
+  const trainingStats = useMemo(() => {
+    return [
+      { name: 'Harassment Policy', assigned: filteredData.length, yes: filteredData.filter(e => e.harassment_policy === 'Yes' || e.harassment_policy === 'Yes').length },
+      { name: 'AI Ethics', assigned: filteredData.length, yes: filteredData.filter(e => e.ai_ethics === 'Yes').length },
+      { name: 'Gemini Training', assigned: filteredData.length, yes: filteredData.filter(e => e.gemini_training === 'Yes').length },
+      { name: 'Figma Training', assigned: filteredData.length, yes: filteredData.filter(e => e.figma_training === 'Yes').length },
+      { name: 'Asana Onboarding', assigned: filteredData.length, yes: filteredData.filter(e => e.asana_onboarded === 'Yes').length }
+    ];
+  }, [filteredData]);
+
+  const totalPages = Math.ceil(filteredData.length / rowsPerPage);
+
+  const triggerToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3000);
+  };
 
   return (
-    <div className="flex h-screen bg-[#fcfcfd] overflow-hidden font-sans relative">
-      {/* Decorative Background Elements */}
-      <div className="absolute top-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-100/30 rounded-full blur-[120px] pointer-events-none" />
-      <div className="absolute bottom-[-10%] left-[-10%] w-[30%] h-[30%] bg-blue-100/20 rounded-full blur-[100px] pointer-events-none" />
-
-      {/* Sidebar - Floating Rail Design */}
-      <aside className="w-20 lg:w-64 bg-slate-900 m-4 rounded-3xl text-white flex flex-col shadow-2xl z-20 transition-all duration-500">
-        <div className="p-6 border-b border-white/5">
-          <div className="flex items-center gap-3 mb-1">
-            <div className="w-9 h-9 bg-indigo-500 rounded-xl flex items-center justify-center font-bold text-lg text-white shadow-lg shadow-indigo-500/20">O</div>
-            <h1 className="text-xl font-bold tracking-tight uppercase text-white lg:block hidden">Opscore</h1>
+    <div className="flex h-screen bg-[#0a0a0a] text-white overflow-hidden font-sans selection:bg-rose-500/30">
+      {/* Sidebar */}
+      <aside className="w-64 bg-[#0d0d0d] border-r border-[#1f1f1f] flex flex-col z-50">
+        <div className="p-8 pb-10">
+          <div className="flex items-center gap-3">
+            <div className="w-6 h-6 bg-[#e11d48] rounded-full shadow-[0_0_15px_rgba(225,29,72,0.4)]"></div>
+            <h1 className="text-xl font-black tracking-tighter text-white italic">Ops<span className="text-[#e11d48]">Core</span></h1>
           </div>
-          <p className="text-[9px] text-slate-500 uppercase tracking-[0.2em] font-bold lg:block hidden">Global HR Ops</p>
+          <p className="text-[9px] text-[#a1a1aa] uppercase tracking-[0.3em] mt-2 font-bold opacity-60">Operations Intelligence</p>
         </div>
 
-        <nav className="flex-1 py-8 px-3 space-y-2">
-          <SidebarLink icon={<LayoutDashboard className="w-5 h-5"/>} label="Overview" active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} />
-          <SidebarLink icon={<Users className="w-5 h-5"/>} label="Pipeline" active={activeTab === 'hiring'} onClick={() => setActiveTab('hiring')} />
-          <SidebarLink icon={<ShieldAlert className="w-5 h-5"/>} label="Compliance" active={activeTab === 'onboarding'} onClick={() => setActiveTab('onboarding')} />
-          <SidebarLink icon={<BarChart3 className="w-5 h-5"/>} label="Production" active={activeTab === 'production'} onClick={() => setActiveTab('production')} />
-          <SidebarLink icon={<LogOut className="w-5 h-5"/>} label="Exits" active={activeTab === 'exit'} onClick={() => setActiveTab('exit')} />
+        <nav className="flex-1 px-4 space-y-2">
+          <NavItem 
+            label="Overview" 
+            icon={<LayoutDashboard className="w-4 h-4" />}
+            active={activeTab === 'overview'} 
+            onClick={() => setActiveTab('overview')} 
+          />
+          <NavItem 
+            label="Hiring Pipeline" 
+            icon={<Briefcase className="w-4 h-4" />}
+            active={activeTab === 'hiring'} 
+            onClick={() => setActiveTab('hiring')} 
+          />
+          <NavItem 
+            label="Compliance Hub" 
+            icon={<ShieldAlert className="w-4 h-4" />}
+            active={activeTab === 'onboarding'} 
+            onClick={() => setActiveTab('onboarding')} 
+          />
+          <NavItem 
+            label="Production Logs" 
+            icon={<BarChart3 className="w-4 h-4" />}
+            active={activeTab === 'production'} 
+            onClick={() => setActiveTab('production')} 
+          />
+          <NavItem 
+            label="Exit Workflow" 
+            icon={<LogOut className="w-4 h-4" />}
+            active={activeTab === 'exit'} 
+            onClick={() => setActiveTab('exit')} 
+          />
         </nav>
 
-        <div className="p-4 bg-white/5 m-3 rounded-2xl border border-white/5 hidden lg:block">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-indigo-500/20 flex items-center justify-center text-indigo-400 font-bold border border-indigo-500/20">AN</div>
-            <div>
-              <p className="text-xs font-bold">A. Naidu</p>
-              <p className="text-[10px] text-slate-500">Super Admin</p>
+        <div className="p-6 border-t border-[#1f1f1f]">
+          <div className="flex items-center gap-4 bg-[#111111] p-3 rounded-xl border border-[#1f1f1f]">
+            <div className="w-8 h-8 rounded-full bg-[#e11d48] flex items-center justify-center text-xs font-black text-white">AN</div>
+            <div className="overflow-hidden">
+              <p className="text-[10px] font-black uppercase text-white truncate">Anushka Naidu</p>
+              <p className="text-[8px] text-[#a1a1aa] uppercase font-bold tracking-widest truncate">Global Admin</p>
             </div>
           </div>
         </div>
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col overflow-hidden relative z-10">
-        {/* Header - Glass Effect */}
-        <header className="h-20 flex items-center justify-between px-8">
+      <main className="flex-1 flex flex-col overflow-hidden relative">
+        {/* Header */}
+        <header className="h-16 bg-[#0a0a0a] border-b border-[#1f1f1f] flex items-center justify-between px-8 shrink-0 z-40">
           <div className="flex items-center gap-4">
-            <div className="flex bg-slate-200/50 backdrop-blur-sm rounded-2xl p-1.5 border border-slate-200/50">
-              {['All', 'US', 'UK', 'SG', 'IND'].map(c => (
-                <button 
-                  key={c}
-                  onClick={() => setSelectedCountry(c as any)}
-                  className={cn(
-                    "px-4 py-1.5 text-[10px] font-bold rounded-xl transition-all uppercase tracking-wider",
-                    selectedCountry === c || (selectedCountry === 'Singapore' && c === 'SG') || (selectedCountry === 'India' && c === 'IND')
-                      ? "bg-white shadow-lg text-indigo-600" 
-                      : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
-                  )}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
+             <div className="flex items-center gap-3 mr-4">
+                <div className="w-5 h-5 bg-[#e11d48] rounded-full"></div>
+                <h1 className="text-lg font-black tracking-tighter text-[#e11d48] italic">OpsCore</h1>
+             </div>
+             
+              <div className="flex items-center bg-[#111111] rounded-full p-1 border border-[#1f1f1f]">
+                 {['All', 'US', 'UK', 'SG', 'IND'].map(c => (
+                   <button 
+                     key={c}
+                     onClick={() => {
+                        setSelectedCountry(COUNTRY_MAP[c]);
+                        setCurrentPage(1);
+                     }}
+                     className={cn(
+                       "px-5 py-1 text-[9px] font-black rounded-full transition-all uppercase tracking-widest",
+                       selectedCountry === COUNTRY_MAP[c]
+                         ? "bg-[#e11d48] text-white border border-[#e11d48]" 
+                         : "text-[#a1a1aa] border border-transparent hover:text-white"
+                     )}
+                   >
+                     {c}
+                   </button>
+                 ))}
+              </div>
           </div>
 
           <div className="flex items-center gap-6">
-            <div className="bg-rose-50/80 backdrop-blur-sm border border-rose-100 px-4 py-2 rounded-2xl flex items-center gap-2.5">
-              <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse ring-4 ring-rose-500/10"></div>
-              <span className="text-[10px] font-bold text-rose-600 uppercase tracking-widest">{stats.bgvAtRisk} Critical Breaches</span>
+            <div className="flex items-center gap-6 mr-4">
+               <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-[#e11d48] animate-pulse"></span>
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#e11d48]">Live</span>
+               </div>
+               <div className="text-right">
+                  <p className="text-[8px] font-black text-[#a1a1aa] uppercase tracking-widest mb-0.5">SLA Count</p>
+                  <p className="text-sm font-black text-[#e11d48] leading-none">{stats.bgvOverdue}</p>
+               </div>
             </div>
-            <button className="bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold px-6 py-2.5 rounded-2xl uppercase tracking-widest transition-all shadow-lg shadow-indigo-600/20 active:scale-95">
-              Daily Export
+            
+            <div className="h-6 w-[1px] bg-[#1f1f1f]"></div>
+            
+            <button className="text-[10px] font-black px-5 py-2 rounded-lg transition-all uppercase tracking-widest bg-[#e11d48] text-white hover:bg-[#f43f5e]">
+              Generate Report
+            </button>
+            <button 
+               onClick={() => setShowEmailModal(true)}
+               className="text-[10px] font-black px-5 py-2 rounded-lg transition-all uppercase tracking-widest border border-[#1f1f1f] text-white hover:bg-[#111111]"
+            >
+               Trigger Alert
             </button>
           </div>
         </header>
 
-        {/* Dashboard Surface */}
-        <section className="flex-1 overflow-y-auto px-8 pb-8 pt-2 scroll-smooth">
-          <div className="mb-10">
-            <h1 className="text-4xl font-bold tracking-tight text-slate-900 mb-2">
-              <span className="text-indigo-600 font-light italic mr-2">{activeTab.toUpperCase()}</span>
-              Intelligence
-            </h1>
-            <p className="text-slate-500 text-sm font-medium">Monitoring operational efficiency across global nodes.</p>
-          </div>
-
-          {/* Core Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <StatCard 
-              label="Total Headcount" 
-              value={stats.total} 
-              subValue="+12% from last month" 
-            />
-            <StatCard 
-              label="BGV At Risk" 
-              value={stats.bgvAtRisk} 
-              subValue="Needs immediate action" 
-              trend="down"
-              isAlert={stats.bgvAtRisk > 0}
-            />
-            <StatCard 
-              label="Compliance Pct" 
-              value={`${Math.round(stats.complianceAvg)}%`} 
-              subValue="Global training target: 95%" 
-            />
-            <StatCard 
-              label="Days Since Intake" 
-              value="14.2" 
-              subValue="Avg. SLA: 10 days" 
-              trend="up"
-              isAlert={true}
-            />
-          </div>
-
-          <AnimatePresence mode="wait">
-            {activeTab === 'overview' && (
-              <motion.div 
-                key="overview"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                className="space-y-6"
-              >
-                {/* AI Panel */}
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="glass-card rounded-[2.5rem] p-8 shadow-xl shadow-indigo-500/5 relative overflow-hidden flex items-center gap-8 group"
+        {/* Content Area */}
+        <div className="flex-1 overflow-y-auto p-8 space-y-8 scrollbar-hide">
+           {errorVisible && (
+             <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-8 flex flex-col items-center justify-center text-center">
+                <FileWarning className="w-12 h-12 text-[#e11d48] mb-4" />
+                <h3 className="text-xl font-black text-white uppercase tracking-tighter mb-2">Data Load Failed</h3>
+                <p className="text-sm text-[#a1a1aa] max-w-md">{errorVisible}</p>
+                <button 
+                  onClick={() => window.location.reload()}
+                  className="mt-6 px-6 py-2 bg-[#e11d48] text-white text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-rose-600 transition-colors"
                 >
-                  <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
-                  
-                  <div className="w-20 h-20 bg-indigo-600 rounded-[2rem] flex items-center justify-center shrink-0 shadow-lg shadow-indigo-600/20 group-hover:rotate-6 transition-transform duration-500">
-                    <Sparkles className="w-10 h-10 text-white" />
-                  </div>
-                  
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="label-mono flex items-center gap-2 text-indigo-600">
-                         AI Intelligence Hub
-                      </h3>
-                      <button 
-                        onClick={fetchAiReport}
-                        disabled={isAiLoading}
-                        className="p-2 hover:bg-indigo-50 rounded-xl transition-colors disabled:opacity-50 text-slate-400 hover:text-indigo-600 border border-slate-100 group/btn"
-                      >
-                        <RefreshCw className={cn("w-4 h-4", isAiLoading && "animate-spin")} />
-                      </button>
-                    </div>
-                    
-                    {aiReport ? (
-                      <motion.div 
-                        initial={{ opacity: 0 }} 
-                        animate={{ opacity: 1 }} 
-                        className="text-sm text-slate-600 whitespace-pre-line leading-relaxed font-medium"
-                      >
-                        {aiReport}
-                      </motion.div>
-                    ) : (
-                      <div className="flex items-center justify-between">
-                        <p className="text-slate-400 text-sm font-medium">Global operational data ingested. Insights ready.</p>
-                        <button 
-                          onClick={fetchAiReport}
-                          className="px-6 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all uppercase tracking-widest shadow-lg shadow-slate-900/20 active:scale-95"
-                        >
-                          Run Full Audit
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
+                  Retry Connection
+                </button>
+             </div>
+           )}
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                  <div className="lg:col-span-2 glass-card rounded-[2.5rem] p-8 shadow-sm">
-                    <div className="flex items-center justify-between mb-8">
-                      <h3 className="text-xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-                        <TrendingUp className="w-5 h-5 text-indigo-500" />
-                        Operational Distribution
-                      </h3>
-                      <div className="flex gap-2">
-                         <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
-                         <span className="label-mono text-[8px] text-slate-500">Current Load</span>
-                      </div>
-                    </div>
-                    <div className="h-80">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={countryDist}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
-                          <XAxis dataKey="name" axisLine={false} tickLine={false} fontSize={10} fontVariant="mono" />
-                          <YAxis axisLine={false} tickLine={false} fontSize={10} fontVariant="mono" />
-                          <Tooltip 
-                            contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 25px rgba(0,0,0,0.05)', fontSize: '11px' }}
-                            cursor={{ fill: 'rgba(99, 102, 241, 0.05)' }}
-                          />
-                          <Bar dataKey="value" fill="#6366f1" radius={[8, 8, 0, 0]} barSize={40} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-
-                  <div className="glass-card rounded-[2.5rem] p-8 shadow-sm">
-                    <h3 className="text-xl font-bold tracking-tight text-slate-900 mb-8">System Pulse</h3>
-                    <div className="space-y-4">
-                      <AlertItem 
-                        type="SLA" 
-                        message="UK BGV SLA Breach" 
-                        time="33 days in queue"
-                        severity="high"
-                      />
-                      <AlertItem 
-                        type="TRAINING" 
-                        message="Onboarding Delay (India)" 
-                        time="Orientation missed"
-                        severity="medium"
-                      />
-                      <AlertItem 
-                        type="RISK" 
-                        message="High Flight Probability" 
-                        time="ID: EMP0006"
-                        severity="high"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="lg:col-span-3 glass-card rounded-[2.5rem] overflow-hidden shadow-sm">
-                     <div className="p-8 border-b border-slate-100 flex items-center justify-between">
-                        <h3 className="text-xl font-bold tracking-tight">Node Topology</h3>
-                        <button className="text-indigo-600 text-xs font-bold uppercase tracking-widest hover:underline px-4 py-2 hover:bg-indigo-50 rounded-xl transition-all">Detailed View</button>
-                     </div>
-                     <div className="overflow-x-auto">
-                     <table className="w-full text-left">
-                        <thead>
-                          <tr className="bg-slate-50/50 border-b border-slate-100">
-                            <th className="px-8 py-4 label-mono">Entity</th>
-                            <th className="px-8 py-4 label-mono">Zone</th>
-                            <th className="px-8 py-4 label-mono">Status</th>
-                            <th className="px-8 py-4 label-mono">Health</th>
-                            <th className="px-8 py-4 label-mono text-center">Threat Level</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 text-[12px]">
-                          {filteredData.map(emp => (
-                            <tr key={emp.employee_id} className="hover:bg-slate-50/50 transition-colors group">
-                              <td className="px-8 py-5">
-                                <div className="flex items-center gap-4">
-                                  <div className="w-10 h-10 rounded-2xl bg-slate-100 flex items-center justify-center font-bold text-xs text-slate-500 border border-slate-200 group-hover:bg-white group-hover:border-indigo-100 transition-all">
-                                    {emp.firstname[0]}{emp.lastname[0]}
-                                  </div>
-                                  <div>
-                                    <p className="font-bold text-slate-900 leading-none mb-1">{emp.firstname} {emp.lastname}</p>
-                                    <p className="text-[10px] text-slate-400 font-medium">{emp.job_title}</p>
-                                  </div>
-                                </div>
-                              </td>
-                              <td className="px-8 py-5">
-                                <span className="uppercase tracking-widest font-bold text-slate-400 text-[10px]">{emp.country}</span>
-                              </td>
-                              <td className="px-8 py-5">
-                                <Badge status={emp.bgv_status} atRisk={emp.bgv_at_risk === 'Yes'} />
-                              </td>
-                              <td className="px-8 py-5">
-                                 <div className="w-24 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                                    <motion.div 
-                                      initial={{ width: 0 }}
-                                      animate={{ width: `${emp.compliance_pct}%` }}
-                                      className={cn(
-                                        "h-full rounded-full transition-all duration-1000",
-                                        emp.compliance_pct === 100 ? "bg-emerald-500" : "bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.5)]"
-                                      )}
-                                    />
-                                 </div>
-                              </td>
-                              <td className="px-8 py-5 text-center">
-                                 <span className={cn(
-                                   "text-[9px] uppercase font-black px-3 py-1 rounded-full border tracking-widest",
-                                   emp.flight_risk === 'High Risk' ? "bg-rose-50 text-rose-600 border-rose-100" :
-                                   emp.flight_risk === 'Medium Risk' ? "bg-amber-50 text-amber-600 border-amber-100" :
-                                   "bg-emerald-50 text-emerald-600 border-emerald-100"
-                                 )}>
-                                   {emp.flight_risk}
-                                 </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                     </table>
-                     </div>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {activeTab === 'hiring' && (
-              <motion.div 
-                key="hiring"
-                initial={{ opacity: 0, scale: 0.98 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="grid grid-cols-12 gap-8"
-              >
-                <div className="col-span-12 bg-rose-50/50 border border-rose-100/50 rounded-3xl p-6 flex items-start gap-6 backdrop-blur-sm">
-                  <div className="w-12 h-12 bg-rose-500 rounded-2xl flex items-center justify-center shrink-0 shadow-lg shadow-rose-500/20">
-                    <AlertTriangle className="w-6 h-6 text-white" />
-                  </div>
+           {!errorVisible && !isLoading && (
+             <>
+               <div className="flex items-center justify-between">
                   <div>
-                    <h4 className="text-sm font-bold text-rose-900 uppercase tracking-widest mb-1">Process Breach Alert</h4>
-                    <p className="text-xs text-rose-800/80 leading-relaxed max-w-4xl">
-                      Verification SLA thresholds exceeded in UK node. Impacting target production deployment for Q3. Regional Lead action required.
-                    </p>
+                     <h2 className="text-2xl font-black text-white tracking-tight uppercase">OpsCore <span className="text-[#e11d48] font-light">Dashboard</span></h2>
+                     <p className="text-[10px] uppercase font-bold tracking-[0.2em] text-[#a1a1aa] mt-1">Real-time lifecycle monitoring and compliance control</p>
                   </div>
-                </div>
+                  <div className="flex items-center gap-2 text-[#a1a1aa]">
+                     <Activity className="w-4 h-4 text-[#e11d48]" />
+                     <span className="text-[10px] font-mono font-bold uppercase">System Latency: 42ms</span>
+                  </div>
+               </div>
 
-                <div className="col-span-12 lg:col-span-7 glass-card rounded-[2.5rem] p-8 shadow-sm">
-                  <div className="flex items-center justify-between mb-10">
-                    <h3 className="text-xl font-bold tracking-tight text-slate-900">Active Pipeline</h3>
-                    <div className="flex bg-slate-100 rounded-xl p-1">
-                       <button className="px-4 py-1.5 text-[9px] font-bold bg-white shadow-sm rounded-lg text-slate-900 uppercase tracking-widest">Inflow</button>
-                       <button className="px-4 py-1.5 text-[9px] font-bold text-slate-400 rounded-lg uppercase tracking-widest">Archive</button>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-4 gap-6 mb-12">
-                    <FunnelStep label="Screening" value="42" progress="100%" color="bg-indigo-500" />
-                    <FunnelStep label="Technical" value="28" progress="66%" color="bg-indigo-400" />
-                    <FunnelStep label="Culture Fit" value="14" progress="33%" color="bg-indigo-300" />
-                    <FunnelStep label="Offer" value="06" progress="15%" color="bg-emerald-500" />
-                  </div>
-                  <div className="space-y-4 pt-10 border-t border-slate-100">
-                     <p className="label-mono mb-4">Critical Tracking</p>
-                     <div className="space-y-2">
-                        {filteredData.slice(0, 3).map(emp => (
-                          <div key={emp.employee_id} className="flex items-center justify-between p-4 bg-slate-50/50 rounded-2xl border border-slate-100 group hover:bg-white hover:shadow-md transition-all">
-                            <span className="text-sm font-bold text-slate-900">{emp.firstname} {emp.lastname}</span>
-                            <div className="flex items-center gap-4">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase">{emp.country}</span>
-                              <span className={cn(
-                                "text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full",
-                                emp.bgv_at_risk === 'Yes' ? "bg-rose-50 text-rose-500" : "bg-emerald-50 text-emerald-500"
-                              )}>
-                                {emp.bgv_at_risk === 'Yes' ? 'Breach' : 'Secure'}
-                              </span>
+               {/* Top KPIs */}
+               <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-7 gap-4">
+                  <StatCard label="Total Employees" value={stats.total} />
+                  <StatCard label="BGV At Risk" value={stats.bgvAtRisk} isAlert={true} color="text-[#e11d48]" />
+                  <StatCard label="BGV Overdue" value={stats.bgvOverdue} isAlert={true} severity="critical" color="text-[#e11d48]" />
+                  <StatCard label="Avg Compliance" value={`${stats.complianceAvg}%`} isAlert={true} severity="warning" color="text-[#f59e0b]" />
+                  <StatCard label="High Flight Risk" value={stats.highFlightRisk} isAlert={true} severity="warning" color="text-[#f59e0b]" />
+                  <StatCard label="Non-Compliant" value={stats.pendingOnboarding} />
+                  <StatCard label="Avg Days / Joining" value={stats.avgDaysJoining} />
+               </div>
+             </>
+           )}
+
+           {!errorVisible && isLoading && (
+             <div className="flex flex-col items-center justify-center p-20 space-y-4">
+                <RefreshCw className="w-10 h-10 text-[#e11d48] animate-spin" />
+                <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[#a1a1aa]">Loading Infrastructure...</p>
+             </div>
+           )}
+
+           {!errorVisible && !isLoading && (
+             <AnimatePresence mode="wait">
+             {activeTab === 'overview' && (
+                <motion.div key="overview" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="grid grid-cols-12 gap-8">
+                   <div className="col-span-12 lg:col-span-8 space-y-8">
+                      {/* Lifecycle Pipeline */}
+                      <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-8 relative overflow-hidden">
+                         <div className="flex items-center justify-between mb-10">
+                            <h3 className="text-xs font-black uppercase tracking-[0.2em]">Employee Lifecycle Pipeline</h3>
+                            <span className="text-[9px] font-bold text-[#a1a1aa] bg-[#1a1a1a] px-3 py-1 rounded-full uppercase">Real-time Feed</span>
+                         </div>
+                         <div className="flex items-center justify-between relative px-4">
+                            <div className="absolute top-1/2 left-0 w-full h-[1px] bg-[#1f1f1f] -translate-y-1/2 -z-0"></div>
+                            <PipelineStage label="Pre-boarding" status="clear" delay={stats.delays.pre} icon={<Users className="w-4 h-4" />} />
+                            <PipelineStage label="Onboarding" status="risk" delay={stats.delays.on} icon={<Briefcase className="w-4 h-4" />} />
+                            <PipelineStage label="Compliance" status="critical" delay={stats.delays.comp} icon={<ShieldAlert className="w-4 h-4" />} />
+                            <PipelineStage label="Production" status="clear" delay={stats.delays.prod} icon={<BarChart3 className="w-4 h-4" />} />
+                            <PipelineStage label="Exit" status="clear" delay={stats.delays.exit} icon={<LogOut className="w-4 h-4" />} />
+                         </div>
+                      </div>
+
+                      {/* Headcount Table replaces Bar Chart */}
+                      <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl overflow-hidden">
+                         <div className="p-6 border-b border-[#1f1f1f] flex items-center justify-between">
+                            <h3 className="text-xs font-black uppercase tracking-[0.2em]">Regional Headcount Distribution</h3>
+                            <Users className="w-4 h-4 text-[#a1a1aa]" />
+                         </div>
+                         <div className="p-0">
+                            <table className="w-full text-left">
+                               <thead className="bg-[#0d0d0d] border-b border-[#1f1f1f]">
+                                  <tr className="text-[9px] font-black uppercase text-[#a1a1aa] tracking-widest">
+                                     <th className="px-8 py-4">Region</th>
+                                     <th className="px-8 py-4 text-center">Headcount</th>
+                                     <th className="px-8 py-4">Scale</th>
+                                     <th className="px-8 py-4 text-right">Status</th>
+                                  </tr>
+                               </thead>
+                               <tbody className="divide-y divide-[#1f1f1f] text-[11px]">
+                                  {headcountData.map(item => (
+                                     <tr key={item.country} className={cn(
+                                       "hover:bg-white/5 transition-colors",
+                                       selectedCountry === item.country ? "bg-[#e11d48]/10 border-l-2 border-l-[#e11d48]" : ""
+                                     )}>
+                                        <td className="px-8 py-4 font-black text-white">{item.country}</td>
+                                        <td className="px-8 py-4 text-center font-mono font-bold text-[#e11d48]">{item.count}</td>
+                                        <td className="px-8 py-4">
+                                           <div className="w-full bg-[#1a1a1a] h-1.5 rounded-full overflow-hidden max-w-[150px]">
+                                              <div className="h-full bg-[#e11d48]" style={{ width: `${(item.count/150)*100}%` }}></div>
+                                           </div>
+                                        </td>
+                                        <td className="px-8 py-4 text-right">
+                                           <span className="text-[9px] font-black uppercase tracking-tighter text-emerald-500">Stable</span>
+                                        </td>
+                                     </tr>
+                                  ))}
+                               </tbody>
+                            </table>
+                         </div>
+                      </div>
+
+                      {/* Employee Tracker */}
+                      <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl overflow-hidden">
+                        <div className="p-6 border-b border-[#1f1f1f] flex items-center justify-between bg-[#0d0d0d]">
+                           <h3 className="text-xs font-black uppercase tracking-[0.2em]">Master Lifecycle Tracker</h3>
+                           <div className="flex gap-4">
+                              <div className="px-4 py-1.5 bg-[#0a0a0a] rounded border border-[#1f1f1f] flex items-center gap-2">
+                                 <Search className="w-3.5 h-3.5 text-[#a1a1aa]" />
+                                 <input 
+                                    className="bg-transparent border-none focus:outline-none text-[10px] text-white uppercase placeholder-[#333333] font-bold w-32" 
+                                    placeholder="SEARCH EMP"
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                 />
+                              </div>
+                           </div>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left">
+                               <thead className="bg-[#0d0d0d] border-b border-[#1f1f1f]">
+                                  <tr className="text-[8px] font-black uppercase text-[#a1a1aa] tracking-widest">
+                                     <th className="px-6 py-4">Employee</th>
+                                     <th className="px-6 py-4">Region</th>
+                                     <th className="px-6 py-4 text-center">BGV Status</th>
+                                     <th className="px-6 py-4">Compliance</th>
+                                     <th className="px-6 py-4 text-center">Risk</th>
+                                     <th className="px-6 py-4 text-right">Intake</th>
+                                  </tr>
+                               </thead>
+                               <tbody className="divide-y divide-[#1f1f1f] text-[10px]">
+                                  {paginatedData.map(emp => (
+                                     <tr key={emp.employee_id} className="hover:bg-white/5 transition-colors group">
+                                        <td className="px-6 py-4">
+                                           <div className="flex items-center gap-3">
+                                              <div className="w-7 h-7 rounded-full bg-[#1a1a1a] border border-[#333333] flex items-center justify-center font-black text-[9px] text-[#e11d48] uppercase">
+                                                 {emp.firstname[0]}{emp.lastname[0]}
+                                              </div>
+                                              <div>
+                                                 <p className="font-black text-white group-hover:text-[#e11d48] transition-colors">{emp.firstname} {emp.lastname}</p>
+                                                 <p className="text-[8px] text-[#a1a1aa] uppercase font-bold tracking-tighter opacity-60">{emp.title}</p>
+                                              </div>
+                                           </div>
+                                        </td>
+                                        <td className="px-6 py-4">
+                                           <span className="font-bold text-[#a1a1aa] uppercase tracking-widest">{emp.country}</span>
+                                        </td>
+                                        <td className="px-6 py-4 text-center">
+                                           <StatusBadge status={emp.bgv_status} />
+                                        </td>
+                                        <td className="px-6 py-4">
+                                           <div className="flex items-center gap-2">
+                                              <div className="flex-1 min-w-[60px] h-1 bg-[#1a1a1a] rounded-full overflow-hidden">
+                                                 <div className="h-full bg-[#e11d48]" style={{ width: `${emp.compliance_pct}%` }}></div>
+                                              </div>
+                                              <span className="font-mono font-bold text-[9px] text-[#a1a1aa]">{emp.compliance_pct}%</span>
+                                           </div>
+                                        </td>
+                                        <td className="px-6 py-4 text-center">
+                                           <RiskBadge risk={emp.flight_risk} />
+                                        </td>
+                                        <td className="px-6 py-4 text-right">
+                                           <span className="font-mono text-[9px] text-[#a1a1aa]">{emp.startdate}</span>
+                                        </td>
+                                     </tr>
+                                  ))}
+                               </tbody>
+                            </table>
+                        </div>
+                        <div className="px-6 py-4 bg-[#0d0d0d] border-t border-[#1f1f1f] flex items-center justify-between">
+                           <p className="text-[8px] font-black uppercase text-[#333333] tracking-[0.2em]">Showing indices {(currentPage-1)*rowsPerPage + 1} - {Math.min(currentPage*rowsPerPage, filteredData.length)}</p>
+                           <div className="flex gap-2">
+                              <button 
+                                 disabled={currentPage === 1}
+                                 onClick={() => setCurrentPage(prev => prev - 1)}
+                                 className="p-1 px-2 border border-[#1f1f1f] rounded text-[9px] font-black disabled:opacity-20 hover:bg-[#111111]"
+                              >PREV</button>
+                              <button 
+                                 disabled={currentPage === totalPages}
+                                 onClick={() => setCurrentPage(prev => prev + 1)}
+                                 className="p-1 px-2 border border-[#1f1f1f] rounded text-[9px] font-black disabled:opacity-20 hover:bg-[#111111]"
+                              >NEXT</button>
+                           </div>
+                        </div>
+                      </div>
+                      {/* AI Academy Engagement Table */}
+                      <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl overflow-hidden">
+                         <div className="p-6 border-b border-[#1f1f1f] flex items-center justify-between bg-[#0d0d0d]">
+                            <div className="flex items-center gap-2">
+                               <Sparkles className="w-3.5 h-3.5 text-[#e11d48]" />
+                               <h3 className="text-xs font-black uppercase tracking-[0.2em]">AI Academy Engagement (Pilot)</h3>
                             </div>
+                            <span className="text-[8px] font-black text-[#e11d48] bg-[#e11d48]/10 px-2 py-0.5 rounded uppercase tracking-tighter">Phase 1 Early Access</span>
+                         </div>
+                         <div className="p-0">
+                            <table className="w-full text-left">
+                               <thead className="bg-[#0d0d0d] border-b border-[#1f1f1f]">
+                                  <tr className="text-[8px] font-black uppercase text-[#a1a1aa] tracking-widest">
+                                     <th className="px-8 py-4">Toolset</th>
+                                     <th className="px-8 py-4 text-center">Assigned</th>
+                                     <th className="px-8 py-4 text-center">Active Use</th>
+                                     <th className="px-8 py-4 text-right">Retention</th>
+                                  </tr>
+                               </thead>
+                               <tbody className="divide-y divide-[#1f1f1f] text-[10px]">
+                                  {[
+                                     { name: 'Gemini (Vertex AI)', assigned: filteredData.length, active: Math.floor(filteredData.length * 0.31), rate: 'Today' },
+                                     { name: 'NotebookLM (Research)', assigned: Math.floor(filteredData.length * 0.4), active: Math.floor(filteredData.length * 0.09), rate: 'Yesterday' },
+                                     { name: 'Flow (Agentic Workflow)', assigned: Math.floor(filteredData.length * 0.3), active: Math.floor(filteredData.length * 0.18), rate: 'Today' }
+                                  ].map(tool => (
+                                     <tr key={tool.name} className="hover:bg-white/5 transition-colors">
+                                        <td className="px-8 py-4 font-black text-white uppercase italic">{tool.name}</td>
+                                        <td className="px-8 py-4 text-center font-mono font-bold text-[#a1a1aa]">{tool.assigned}</td>
+                                        <td className="px-8 py-4 text-center font-mono font-bold text-white">{tool.active}</td>
+                                        <td className="px-8 py-4 text-right">
+                                           <div className="flex justify-end items-center gap-2">
+                                              <div className="w-12 h-1 bg-[#1a1a1a] rounded-full overflow-hidden">
+                                                 <div className="h-full bg-rose-500" style={{ width: `${(tool.active/tool.assigned)*100}%` }}></div>
+                                              </div>
+                                              <span className="font-mono text-[9px] text-white">{(tool.active/tool.assigned*100).toFixed(0)}%</span>
+                                           </div>
+                                        </td>
+                                     </tr>
+                                  ))}
+                               </tbody>
+                            </table>
+                         </div>
+                      </div>
+                   </div>
+
+                   <div className="col-span-12 lg:col-span-4 space-y-8">
+                      {/* BGV Alerts Panel */}
+                      <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-6">
+                         <h3 className="text-xs font-black uppercase tracking-[0.2em] mb-6 flex items-center gap-2 text-[#e11d48]">
+                            <AlertTriangle className="w-4 h-4" />
+                            SLA Integrity Alerts
+                         </h3>
+                         <div className="space-y-4">
+                            {stats.bgvOverdue > 0 && <AlertItem type="CRITICAL" message={`${stats.bgvOverdue} High-Risk Verification Overdue`} severity="high" />}
+                            
+                            {overdueEmployees.slice(0, 5).map(emp => (
+                               <div key={emp.employee_id} className="p-3 bg-[#0a0a0a] border border-rose-500/20 rounded-lg flex items-center justify-between group hover:bg-[#e11d48]/5 transition-colors">
+                                  <div>
+                                     <p className="text-[9px] font-black uppercase text-white group-hover:text-[#e11d48]">{emp.firstname} {emp.lastname}</p>
+                                     <p className="text-[8px] font-mono text-[#a1a1aa] uppercase">{emp.bgv_days_elapsed} Days Elapsed</p>
+                                  </div>
+                                  <span className="text-[8px] font-black py-1 px-2 bg-[#e11d48] text-white rounded uppercase shadow shadow-rose-900/40">OVERDUE</span>
+                               </div>
+                            ))}
+
+                            {overdueEmployees.length === 0 && (
+                               <div className="py-8 flex flex-col items-center justify-center text-center opacity-40">
+                                  <CheckCircle2 className="w-8 h-8 text-emerald-500 mb-2" />
+                                  <p className="text-[9px] font-black uppercase tracking-widest text-[#a1a1aa]">All Clear</p>
+                               </div>
+                            )}
+                            
+                            <AlertItem type="NOTIFICATION" message={`Total Region Data Points: ${filteredData.length}`} severity="low" />
+                         </div>
+                      </div>
+
+                      {/* Action Owners */}
+                      <div className="bg-[#0d0d0d] border border-[#1f1f1f] rounded-xl p-8 relative overflow-hidden">
+                         <div className="absolute -bottom-10 -right-10 w-48 h-48 bg-[#e11d48]/5 rounded-full blur-3xl"></div>
+                         <h3 className="text-xs font-black uppercase tracking-[0.2em] mb-6">Default Action Owners</h3>
+                         <div className="grid grid-cols-1 gap-3 space-y-1">
+                            <OwnerRow risk="BGV At Risk" owner="Compliance Director" />
+                            <OwnerRow risk="High Flight Risk" owner="BU Managing Director" />
+                            <OwnerRow risk="Onboarding Gap" owner="HR Business Partner" />
+                         </div>
+                      </div>
+                   </div>
+                </motion.div>
+             )}
+
+             {activeTab === 'hiring' && (
+                <motion.div key="hiring" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
+                   <div className="grid grid-cols-12 gap-8">
+                      <div className="col-span-12 lg:col-span-8 bg-[#111111] border border-[#1f1f1f] rounded-xl overflow-hidden shadow-2xl">
+                         <div className="p-8 border-b border-[#1f1f1f] flex items-center justify-between bg-[#0d0d0d]">
+                            <h3 className="text-sm font-black uppercase tracking-[0.2em]">Active Hiring Funnel Aging</h3>
+                            <button className="text-[10px] font-black text-[#e11d48] uppercase tracking-widest hover:underline transition-all">Export Funnel Metrics</button>
+                         </div>
+                         <div className="p-10 flex items-center justify-between border-b border-[#1f1f1f]">
+                            <FunnelMetric label="Applied" value="2.4k" color="text-white" />
+                            <FunnelMetric label="Interval" value="482" color="text-white" />
+                            <FunnelMetric label="Offered" value="96" color="text-[#e11d48]" />
+                            <FunnelMetric label="Onboard" value="12" color="text-emerald-500" />
+                         </div>
+                         <div className="p-0 overflow-x-auto">
+                            <table className="w-full text-left">
+                               <thead className="bg-[#0d0d0d] border-b border-[#1f1f1f]">
+                                  <tr className="text-[8px] font-black uppercase text-[#a1a1aa] tracking-widest">
+                                     <th className="px-8 py-4">Country SLA Region</th>
+                                     <th className="px-8 py-4">Target SLA</th>
+                                     <th className="px-8 py-4">Actual Avg</th>
+                                     <th className="px-8 py-4">Drift</th>
+                                     <th className="px-8 py-4 text-right">Health</th>
+                                  </tr>
+                               </thead>
+                               <tbody className="divide-y divide-[#1f1f1f] text-[10px]">
+                                  {[
+                                     { c: 'US (Global Ops)', sla: '7d', avg: '6.4d', drift: '-0.6d', status: 'Optimal' },
+                                     { c: 'UK (Compliance)', sla: '10d', avg: '12.8d', drift: '+2.8d', status: 'At Risk' },
+                                     { c: 'Singapore (Tech)', sla: '14d', avg: '21.2d', drift: '+7.2d', status: 'Breach' },
+                                     { c: 'India (Scale)', sla: '21d', avg: '19.5d', drift: '-1.5d', status: 'Optimal' }
+                                  ].map(item => (
+                                     <tr key={item.c} className="hover:bg-white/5 transition-all">
+                                        <td className="px-8 py-5 font-black uppercase text-white tracking-tight">{item.c}</td>
+                                        <td className="px-8 py-5 font-mono text-[#a1a1aa]">{item.sla}</td>
+                                        <td className="px-8 py-5 font-mono text-white">{item.avg}</td>
+                                        <td className={`px-8 py-5 font-mono font-bold ${item.drift.startsWith('+') ? 'text-[#e11d48]' : 'text-emerald-500'}`}>{item.drift}</td>
+                                        <td className="px-8 py-5 text-right">
+                                           <span className={`text-[8px] font-black uppercase tracking-[0.2em] px-3 py-1 rounded-full ${item.status === 'Optimal' ? 'bg-emerald-500/10 text-emerald-500' : item.status === 'At Risk' ? 'bg-amber-500/10 text-amber-500' : 'bg-rose-500/10 text-[#e11d48]'}`}>
+                                              {item.status}
+                                           </span>
+                                        </td>
+                                     </tr>
+                                  ))}
+                               </tbody>
+                            </table>
+                         </div>
+                      </div>
+
+                      <div className="col-span-12 lg:col-span-4 bg-[#111111] border border-[#1f1f1f] rounded-xl p-8 flex flex-col items-center justify-center relative overflow-hidden">
+                         <div className="absolute inset-0 bg-[#e11d48]/5 pointer-events-none"></div>
+                         <h3 className="text-xs font-black uppercase tracking-[0.2em] mb-10 self-start">BGV Agency Load Distribution</h3>
+                         <div className="w-full h-64">
+                            <ResponsiveContainer width="100%" height="100%">
+                               <PieChart>
+                                  <Pie
+                                     data={[
+                                        { name: 'HireRight', value: 40 },
+                                        { name: 'Credence', value: 30 },
+                                        { name: 'Veritas', value: 20 },
+                                        { name: 'AuthBridge', value: 10 }
+                                     ]}
+                                     innerRadius={60}
+                                     outerRadius={80}
+                                     paddingAngle={5}
+                                     dataKey="value"
+                                     stroke="none"
+                                  >
+                                     <Cell fill="#e11d48" />
+                                     <Cell fill="#333333" />
+                                     <Cell fill="#444444" />
+                                     <Cell fill="#222222" />
+                                  </Pie>
+                                  <Tooltip contentStyle={{ backgroundColor: '#111111', border: '1px solid #1f1f1f', borderRadius: '8px' }} />
+                               </PieChart>
+                            </ResponsiveContainer>
+                         </div>
+                         <div className="grid grid-cols-2 gap-6 w-full mt-8">
+                            <LegendItem label="HireRight" color="#e11d48" value="40%" />
+                            <LegendItem label="Credence" color="#333333" value="30%" />
+                            <LegendItem label="Veritas" color="#444444" value="20%" />
+                            <LegendItem label="AuthBridge" color="#222222" value="10%" />
+                         </div>
+                      </div>
+                   </div>
+                </motion.div>
+             )}
+
+             {activeTab === 'onboarding' && (
+                <motion.div key="compliance" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col gap-8">
+                   <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl overflow-hidden">
+                      <div className="p-8 border-b border-[#1f1f1f] flex items-center justify-between bg-[#0d0d0d]">
+                         <h3 className="text-sm font-black uppercase tracking-[0.2em]">Global Training Module Completion</h3>
+                         <div className="flex bg-[#0a0a0a] rounded-lg p-1 border border-[#1f1f1f]">
+                           <button 
+                              onClick={() => setOnboardingView('summary')}
+                              className={cn("px-4 py-1.5 text-[9px] font-black rounded transition-all uppercase", onboardingView === 'summary' ? "bg-[#e11d48] text-white" : "text-[#a1a1aa]")}
+                           >Metrics</button>
+                           <button 
+                              onClick={() => setOnboardingView('employee')}
+                              className={cn("px-4 py-1.5 text-[9px] font-black rounded transition-all uppercase", onboardingView === 'employee' ? "bg-[#e11d48] text-white" : "text-[#a1a1aa]")}
+                           >Checklist</button>
+                         </div>
+                      </div>
+                      <div className="p-0 overflow-x-auto">
+                        {onboardingView === 'summary' ? (
+                          <table className="w-full text-left">
+                             <thead className="bg-[#0d0d0d] border-b border-[#1f1f1f]">
+                                <tr className="text-[8px] font-black uppercase text-[#a1a1aa] tracking-widest">
+                                   <th className="px-8 py-5">Module Name</th>
+                                   <th className="px-8 py-5 text-center">Assigned</th>
+                                   <th className="px-8 py-5 text-center">Completed</th>
+                                   <th className="px-8 py-5">Engagement Scale</th>
+                                   <th className="px-8 py-5 text-right">Actions</th>
+                                </tr>
+                             </thead>
+                             <tbody className="divide-y divide-[#1f1f1f] text-[10px]">
+                                {trainingStats.map(module => (
+                                   <tr key={module.name} className="hover:bg-white/5 transition-colors group">
+                                      <td className="px-8 py-5 font-black uppercase text-white tracking-tight">{module.name}</td>
+                                      <td className="px-8 py-5 text-center font-mono font-bold text-[#a1a1aa]">{module.assigned}</td>
+                                      <td className="px-8 py-5 text-center font-mono font-bold text-white group-hover:text-[#e11d48] transition-colors">{module.yes}</td>
+                                      <td className="px-8 py-5">
+                                         <div className="w-full bg-[#1a1a1a] h-1.5 rounded-full overflow-hidden max-w-[200px]">
+                                            <div className="h-full bg-[#e11d48]" style={{ width: `${(module.yes/module.assigned)*100}%` }}></div>
+                                         </div>
+                                      </td>
+                                      <td className="px-8 py-5 text-right">
+                                         <button 
+                                            onClick={() => triggerToast(`Compliance reminder dispatched for ${module.name}`)}
+                                            className="text-[9px] font-black uppercase tracking-widest text-[#e11d48] hover:text-[#f43f5e] transition-colors"
+                                         >Nudge</button>
+                                      </td>
+                                   </tr>
+                                ))}
+                             </tbody>
+                          </table>
+                        ) : (
+                          <table className="w-full text-left">
+                             <thead className="bg-[#0d0d0d] border-b border-[#1f1f1f]">
+                                <tr className="text-[8px] font-black uppercase text-[#a1a1aa] tracking-widest">
+                                   <th className="px-8 py-5">Employee</th>
+                                   <th className="px-2 py-5 text-center">Day 0</th>
+                                   <th className="px-2 py-5 text-center">Orient</th>
+                                   <th className="px-2 py-5 text-center">Harass</th>
+                                   <th className="px-2 py-5 text-center">Ethics</th>
+                                   <th className="px-2 py-5 text-center">Gemini</th>
+                                   <th className="px-2 py-5 text-center">Figma</th>
+                                   <th className="px-2 py-5 text-center">Asana</th>
+                                </tr>
+                             </thead>
+                             <tbody className="divide-y divide-[#1f1f1f] text-[10px]">
+                                {paginatedData.map(emp => (
+                                   <tr key={emp.employee_id} className="hover:bg-white/5 transition-colors group">
+                                      <td className="px-8 py-5 font-black text-white">{emp.firstname} {emp.lastname}</td>
+                                      <td className="px-2 py-5 text-center font-black">{emp.day0_completed === 'Yes' ? '✓' : '✗'}</td>
+                                      <td className="px-2 py-5 text-center font-black">{emp.orientation_completed === 'Yes' ? '✓' : '✗'}</td>
+                                      <td className="px-2 py-5 text-center font-black">{emp.harassment_policy === 'Yes' ? '✓' : '✗'}</td>
+                                      <td className="px-2 py-5 text-center font-black">{emp.ai_ethics === 'Yes' ? '✓' : '✗'}</td>
+                                      <td className="px-2 py-5 text-center font-black font-mono text-[#e11d48]">{emp.gemini_training === 'Yes' ? '✓' : '✗'}</td>
+                                      <td className="px-2 py-5 text-center font-black">{emp.figma_training === 'Yes' ? '✓' : '✗'}</td>
+                                      <td className="px-2 py-5 text-center font-black">{emp.asana_onboarded === 'Yes' ? '✓' : '✗'}</td>
+                                   </tr>
+                                ))}
+                             </tbody>
+                          </table>
+                        )}
+                      </div>
+                   </div>
+
+                   <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-8">
+                      <h3 className="text-xs font-black uppercase tracking-[0.2em] mb-8">System Deployment Protocol Checklist</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+                         <CategorySection label="Environment" items={['Developer Setup', 'IDE Config', 'Git Profile']} />
+                         <CategorySection label="Compliance" items={['Security Audit', 'Access Logs', 'NDA Finalized']} />
+                         <CategorySection label="AI Academy" items={['Vertex AI Access', 'Gemini Workshop', 'Gemini UI Kit']} />
+                         <CategorySection label="Admin" items={['Asset Sync', 'SLA Contract', 'Budget Approval']} />
+                      </div>
+                   </div>
+                </motion.div>
+             )}
+
+             {activeTab === 'production' && (
+                <motion.div key="production" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
+                   <div className="grid grid-cols-12 gap-8">
+                      <div className="col-span-12 lg:col-span-8 bg-[#111111] border border-[#1f1f1f] rounded-xl overflow-hidden shadow-2xl">
+                          <div className="p-8 border-b border-[#1f1f1f] flex items-center justify-between bg-[#0d0d0d]">
+                             <h3 className="text-sm font-black uppercase tracking-[0.2em]">Risk Variance by Jurisdiction</h3>
+                             <TrendingUp className="w-4 h-4 text-[#e11d48]" />
                           </div>
-                        ))}
-                     </div>
-                  </div>
-                </div>
-
-                <div className="col-span-12 lg:col-span-5 space-y-8">
-                  <div className="glass-card rounded-[2.5rem] p-8">
-                     <h3 className="text-xl font-bold tracking-tight text-slate-900 mb-8">Agency Throughput</h3>
-                     <div className="h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                           <BarChart data={filteredData.slice(0, 5).map(e => ({ name: e.bgv_agency, val: e.bgv_days_elapsed }))}>
-                              <Bar dataKey="val" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={24} />
-                              <XAxis dataKey="name" axisLine={false} tickLine={false} fontSize={9} fontVariant="mono" />
-                              <YAxis axisLine={false} tickLine={false} fontSize={9} fontVariant="mono" />
-                              <Tooltip cursor={{fill: 'rgba(99, 102, 241, 0.03)'}} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', fontSize: '10px' }} />
-                           </BarChart>
-                        </ResponsiveContainer>
-                     </div>
-                  </div>
-                  <div className="bg-slate-900 rounded-[2.5rem] p-8 text-white relative overflow-hidden group">
-                    <p className="label-mono text-slate-500 mb-2">Network Insights</p>
-                    <p className="text-base font-light leading-relaxed mb-6">
-                      Average regional latency for BGV processing is <span className="text-indigo-400 font-bold italic">14.2 days</span>, trending 42% above SLA targets.
-                    </p>
-                    <button className="w-full py-4 bg-white/5 hover:bg-white/10 rounded-2xl border border-white/10 text-[10px] font-bold uppercase tracking-widest transition-all">Audit Global Latency</button>
-                    <Globe className="absolute -bottom-8 -right-8 w-32 h-32 text-indigo-500/10 opacity-50 group-hover:rotate-45 transition-transform duration-[2000ms]" />
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {activeTab === 'onboarding' && (
-              <motion.div 
-                key="onboarding"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="grid grid-cols-12 gap-8"
-              >
-                <div className="col-span-12 lg:col-span-8 glass-card rounded-[2.5rem] shadow-sm flex flex-col">
-                  <div className="p-8 border-b border-slate-100 flex items-center justify-between">
-                    <h3 className="text-xl font-bold tracking-tight text-slate-900">Training Alignment</h3>
-                    <button className="px-5 py-2 bg-slate-900 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-all">Audit Logs</button>
-                  </div>
-                  <div className="p-0 overflow-x-auto">
-                    <table className="w-full text-left">
-                      <thead>
-                        <tr className="bg-slate-50/50 border-b border-slate-100">
-                          <th className="px-8 py-4 label-mono">Identity</th>
-                          <th className="px-8 py-4 label-mono text-center">AI Ethics</th>
-                          <th className="px-8 py-4 label-mono text-center">Gemini</th>
-                          <th className="px-8 py-4 label-mono text-center">Security</th>
-                          <th className="px-8 py-4 label-mono text-center">Clearance</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 text-[12px]">
-                        {filteredData.map(emp => (
-                          <tr key={emp.employee_id} className="hover:bg-slate-50/50 transition-colors">
-                            <td className="px-8 py-5 font-bold text-slate-900">{emp.firstname} {emp.lastname}</td>
-                            <td className="px-8 py-5 text-center"><ModuleBadge complete={emp.ai_ethics === 'Yes'} /></td>
-                            <td className="px-8 py-5 text-center"><ModuleBadge complete={emp.gemini_training === 'Yes'} /></td>
-                            <td className="px-8 py-5 text-center"><ModuleBadge complete={emp.harassment_policy === 'Yes'} /></td>
-                            <td className="px-8 py-5 text-center">
-                              <span className={cn(
-                                "px-3 py-1 rounded-full font-black text-[9px] uppercase tracking-widest",
-                                emp.compliance_pct === 100 
-                                  ? "bg-emerald-50 text-emerald-700" 
-                                  : "bg-amber-50 text-amber-700"
-                              )}>
-                                {emp.compliance_pct === 100 ? 'Verified' : 'Pending'}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <div className="col-span-12 lg:col-span-4 space-y-8">
-                  <div className="bg-indigo-600 text-white p-8 rounded-[2.5rem] shadow-2xl relative overflow-hidden group">
-                    <div className="relative z-10">
-                      <p className="label-mono text-indigo-300 mb-2">Aggregate Index</p>
-                      <p className="text-6xl font-light mb-6 tracking-tighter">92.<span className="text-2xl font-bold opacity-60">4%</span></p>
-                      <p className="text-indigo-100 text-xs leading-relaxed mb-8 font-medium">Compliance trajectory stable. Critical path clear for Q3 hiring cohorts.</p>
-                      <div className="flex gap-2">
-                        <div className="px-4 py-2 bg-white/10 rounded-2xl text-[9px] font-bold backdrop-blur-md border border-white/5 uppercase tracking-widest shadow-xl">Best Node: India</div>
-                      </div>
-                    </div>
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl" />
-                  </div>
-
-                  <div className="glass-card rounded-[2.5rem] p-8">
-                    <h4 className="label-mono mb-8">Asset Deployment</h4>
-                    <div className="space-y-6">
-                      <ProgressItem label="Workstations" value={84} color="bg-indigo-500 shadow-sm shadow-indigo-500/50" />
-                      <ProgressItem label="Network Auth" value={100} color="bg-emerald-500 shadow-sm shadow-emerald-500/50" />
-                      <ProgressItem label="Physical Access" value={62} color="bg-amber-500 shadow-sm shadow-amber-500/50" />
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-900 border border-slate-800 rounded-[2.5rem] p-6 text-white text-center">
-                    <div className="flex items-center justify-center gap-3 mb-4">
-                      <ShieldAlert className="w-5 h-5 text-indigo-400" />
-                      <p className="label-mono text-slate-400">Security Audit</p>
-                    </div>
-                    <p className="text-xs text-slate-300 leading-relaxed font-medium">Regional biometric nodes in Singapore report 4 pending identities.</p>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {activeTab === 'exit' && (
-              <motion.div 
-                key="exit"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="grid grid-cols-12 gap-8"
-              >
-                 <div className="col-span-12 lg:col-span-4 glass-card p-10 rounded-[2.5rem] shadow-sm flex flex-col justify-between">
-                    <div className="text-center space-y-6">
-                      <div className="w-16 h-16 bg-slate-900 rounded-[2rem] flex items-center justify-center mx-auto shadow-2xl">
-                        <LogOut className="w-7 h-7 text-white" />
-                      </div>
-                      <div>
-                        <h3 className="text-xl font-bold text-slate-900 tracking-tight mb-2">Offboarding Matrix</h3>
-                        <p className="text-xs text-slate-500 leading-relaxed max-w-[200px] mx-auto">Structured asset recovery and secure access revocation nodes.</p>
-                      </div>
-                    </div>
-                    
-                    <div className="p-6 bg-slate-50 border border-slate-100 rounded-[2rem] mt-10 relative overflow-hidden group">
-                       <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-600"></div>
-                       <div className="flex justify-between items-center mb-4">
-                          <span className="label-mono text-[8px]">Next LDW Node</span>
-                          <span className="text-[8px] px-2.5 py-1 bg-rose-50 text-rose-600 rounded-full font-black uppercase tracking-widest">Urgent: 3D</span>
-                       </div>
-                       <p className="font-bold text-base text-slate-900">Joseph Martins</p>
-                       <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">Zone: India • Unit: BPC</p>
-                    </div>
-                 </div>
-
-                 <div className="col-span-12 lg:col-span-8 glass-card rounded-[2.5rem] overflow-hidden shadow-sm flex flex-col">
-                    <div className="p-8 border-b border-slate-100 flex items-center justify-between">
-                      <h3 className="text-xl font-bold tracking-tight">Access Revocation Flow</h3>
-                      <div className="flex gap-4">
-                        <div className="flex items-center gap-2">
-                           <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                           <span className="label-mono text-[8px] text-slate-400">Revoked</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                           <div className="w-2 h-2 rounded-full bg-rose-500"></div>
-                           <span className="label-mono text-[8px] text-slate-400">Active Risk</span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left">
-                        <thead>
-                          <tr className="bg-slate-50/50">
-                            <th className="px-8 py-4 label-mono">Identity</th>
-                            <th className="px-8 py-4 label-mono">Zone</th>
-                            <th className="px-8 py-4 label-mono text-center">LDW</th>
-                            <th className="px-8 py-4 label-mono text-center">Credential</th>
-                            <th className="px-8 py-4 label-mono text-center">Asset Node</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 text-[12px]">
-                          {filteredData.slice(0, 5).map((emp, i) => (
-                            <tr key={emp.employee_id} className="hover:bg-slate-50/50 transition-colors">
-                              <td className="px-8 py-5 font-bold text-slate-900">{emp.firstname} {emp.lastname}</td>
-                              <td className="px-8 py-5 uppercase tracking-widest text-[10px] text-slate-400 font-bold">{emp.country}</td>
-                              <td className="px-8 py-5 text-center font-mono text-slate-500 text-[11px]">OCT {24 + i} • 23</td>
-                              <td className="px-8 py-5 text-center">
-                                <span className={cn(
-                                  "px-3 py-1 rounded-full font-black text-[9px] uppercase tracking-[0.1em]",
-                                  i === 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
-                                )}>
-                                  {i === 0 ? 'Revoked' : 'Active'}
-                                </span>
-                              </td>
-                              <td className="px-8 py-5 text-center text-slate-400">
-                                {i === 0 ? <CheckCircle2 className="w-5 h-5 mx-auto text-emerald-500" /> : <Clock className="w-5 h-5 mx-auto text-slate-200 opacity-20" />}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                 </div>
-              </motion.div>
-            )}
-
-            {activeTab === 'production' && (
-              <motion.div 
-                key="production"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="grid grid-cols-12 gap-8"
-              >
-                <div className="col-span-12 lg:col-span-8 glass-card p-10 rounded-[2.5rem] shadow-sm">
-                   <div className="flex items-center justify-between mb-10">
-                    <h3 className="text-xl font-bold tracking-tight text-slate-900 flex items-center gap-3">
-                       <TrendingUp className="w-6 h-6 text-indigo-500" />
-                       Node Performance Matrix
-                    </h3>
-                    <div className="flex gap-6">
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full bg-indigo-500 shadow-lg shadow-indigo-500/20"></div>
-                        <span className="label-mono text-[10px]">Efficiency</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full bg-emerald-500 shadow-lg shadow-emerald-500/20"></div>
-                        <span className="label-mono text-[10px]">Engagement</span>
-                      </div>
-                    </div>
-                   </div>
-                   <div className="h-80">
-                      <ResponsiveContainer width="100%" height="100%">
-                         <LineChart data={filteredData}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                            <XAxis dataKey="firstname" axisLine={false} tickLine={false} hide />
-                            <YAxis axisLine={false} tickLine={false} fontSize={10} fontVariant="mono" />
-                            <Tooltip contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 25px rgba(0,0,0,0.05)', fontSize: '11px' }} />
-                            <Line type="stepAfter" dataKey="performance_score" stroke="#6366f1" strokeWidth={3} dot={false} activeDot={{ r: 6, strokeWidth: 0 }} />
-                            <Line type="monotone" dataKey="engagement_score" stroke="#10B981" strokeWidth={3} dot={false} activeDot={{ r: 6, strokeWidth: 0 }} />
-                         </LineChart>
-                      </ResponsiveContainer>
-                   </div>
-                </div>
-
-                <div className="col-span-12 lg:col-span-4 space-y-8">
-                   <div className="bg-slate-900 text-white p-8 rounded-[2.5rem] shadow-2xl relative overflow-hidden group">
-                      <div className="relative z-10">
-                        <div className="flex items-center gap-3 mb-8">
-                          <Sparkles className="w-6 h-6 text-indigo-400" />
-                          <h3 className="label-mono text-slate-400">AI Risk Forensics</h3>
-                        </div>
-                        <p className="text-base font-light text-slate-300 leading-relaxed mb-8 italic border-l-2 border-indigo-500/50 pl-6">
-                          "UK deployment nodes exhibiting anomalous churn indicators. Regional retention workshops identified as critical path."
-                        </p>
-                        <div className="space-y-4">
-                           <div className="flex items-center gap-3 p-4 bg-white/5 rounded-2xl border border-white/5">
-                             <TrendingUp className="w-4 h-4 text-rose-400" />
-                             <span className="text-[10px] font-bold uppercase tracking-widest">High Volatility: London Node</span>
-                           </div>
-                           <div className="flex items-center gap-3 p-4 bg-white/5 rounded-2xl border border-white/5">
-                             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                             <span className="text-[10px] font-bold uppercase tracking-widest">Optimized Node: Bangalore</span>
-                           </div>
-                        </div>
-                      </div>
-                      <Globe className="absolute -bottom-12 -right-12 w-48 h-48 text-indigo-500/10 opacity-40 group-hover:rotate-12 transition-transform duration-[3000ms]" />
-                   </div>
-
-                   <div className="glass-card rounded-[2.5rem] p-8">
-                      <h4 className="label-mono mb-8">Unit Sentiment Score</h4>
-                      <div className="space-y-4">
-                        {['Content Strat.', 'UI/UX Lab', 'Ad Ops Hub'].map((unit, i) => (
-                          <div key={unit} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:shadow-md transition-all">
-                             <span className="text-xs font-bold text-slate-700">{unit}</span>
-                             <span className={cn(
-                               "text-xs font-black tracking-widest",
-                               i === 1 ? "text-rose-500" : "text-emerald-500"
-                             )}>{4.2 - i * 0.8} / 5.0</span>
+                          <div className="p-0 overflow-x-auto">
+                             <table className="w-full text-left">
+                                <thead className="bg-[#0d0d0d] border-b border-[#1f1f1f]">
+                                   <tr className="text-[8px] font-black uppercase text-[#a1a1aa] tracking-widest">
+                                      <th className="px-8 py-5">Region</th>
+                                      <th className="px-8 py-5 text-center">High Risk Count</th>
+                                      <th className="px-8 py-5 text-center">Volatility</th>
+                                      <th className="px-8 py-5 text-right">Trend</th>
+                                   </tr>
+                                </thead>
+                                <tbody className="divide-y divide-[#1f1f1f] text-[10px]">
+                                   {[
+                                      { r: 'United States', risk: 82, vol: 'Low', trend: 'down' },
+                                      { r: 'United Kingdom', risk: 45, vol: 'Neutral', trend: 'flat' },
+                                      { r: 'Singapore', risk: 36, vol: 'Medium', trend: 'up' },
+                                      { r: 'India', risk: 43, vol: 'Low', trend: 'down' }
+                                   ].map(item => (
+                                      <tr key={item.r} className="hover:bg-white/5 transition-colors group">
+                                         <td className="px-8 py-5 font-black text-white">{item.r}</td>
+                                         <td className="px-8 py-5 text-center font-mono font-bold text-[#e11d48] group-hover:scale-110 transition-transform">{item.risk}</td>
+                                         <td className="px-8 py-5 text-center">
+                                            <span className={`text-[9px] font-black uppercase tracking-tighter ${item.vol === 'Low' ? 'text-emerald-500' : item.vol === 'Medium' ? 'text-amber-500' : 'text-white'}`}>{item.vol} Vibe</span>
+                                         </td>
+                                         <td className="px-8 py-5 text-right">
+                                            <span className={`font-mono font-bold ${item.trend === 'up' ? 'text-rose-500' : item.trend === 'down' ? 'text-emerald-500' : 'text-slate-500'}`}>
+                                               {item.trend === 'up' ? '↗' : item.trend === 'down' ? '↘' : '→'}
+                                            </span>
+                                         </td>
+                                      </tr>
+                                   ))}
+                                </tbody>
+                             </table>
                           </div>
-                        ))}
+                      </div>
+
+                      <div className="col-span-12 lg:col-span-4 bg-[#111111] border border-[#1f1f1f] rounded-xl p-8 relative overflow-hidden">
+                         <div className="absolute top-0 right-0 w-24 h-24 bg-[#e11d48]/5 rounded-bl-full animate-pulse"></div>
+                         <h3 className="text-xs font-black uppercase tracking-[0.2em] mb-10">Production Deployment Overview</h3>
+                         <div className="space-y-12">
+                            <div className="text-center">
+                               <p className="text-[8px] font-black text-[#a1a1aa] uppercase tracking-[0.3em] mb-2 font-bold opacity-60">System Stability</p>
+                               <p className="text-5xl font-black text-white tracking-tighter">99.98%</p>
+                            </div>
+                            <div className="px-4 py-8 bg-[#0a0a0a] rounded-2xl border border-[#1f1f1f] flex flex-col items-center justify-center space-y-4">
+                               <div className="w-12 h-12 bg-[#e11d48] rounded-full flex items-center justify-center animate-pulse shadow-lg shadow-rose-900/50">
+                                  <RefreshCw className="w-6 h-6 text-white" />
+                               </div>
+                               <p className="text-[10px] font-black uppercase tracking-widest text-white">Live Operations Sync</p>
+                               <p className="text-[9px] font-bold text-[#a1a1aa] uppercase tracking-tighter">Updating every 5.0 seconds</p>
+                            </div>
+                         </div>
                       </div>
                    </div>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </section>
-      </main>
-    </div>
-  );
-}
 
-function SidebarLink({ icon, label, active, onClick }: { icon: React.ReactNode, label: string, active?: boolean, onClick: () => void }) {
-  return (
-    <button 
-      onClick={onClick}
-      className={cn(
-        "w-full flex items-center gap-3 px-3 py-3 lg:px-4 rounded-xl transition-all group relative duration-300",
-        active 
-          ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20" 
-          : "text-slate-400 hover:text-white hover:bg-white/5"
-      )}
-    >
-      <div className={cn("transition-transform duration-300", active ? "scale-110" : "group-hover:scale-110")}>
-        {icon}
-      </div>
-      <span className={cn("text-xs font-bold tracking-wider uppercase lg:block hidden", active ? "opacity-100" : "opacity-60 group-hover:opacity-100 transition-opacity")}>
-        {label}
-      </span>
-      {active && (
-        <motion.div 
-          layoutId="sidebar-active"
-          className="absolute inset-0 bg-indigo-600 rounded-xl -z-10"
-        />
-      )}
-    </button>
-  );
-}
+                   {/* Added Employee Status Table for Production Logs */}
+                   <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl overflow-hidden">
+                      <div className="p-8 border-b border-[#1f1f1f] bg-[#0d0d0d] flex items-center justify-between">
+                         <h3 className="text-xs font-black uppercase tracking-[0.2em]">Live Employee Production Status</h3>
+                         <span className="text-[9px] font-bold text-[#a1a1aa] uppercase">Total Active: 500</span>
+                      </div>
+                      <div className="overflow-x-auto">
+                         <table className="w-full text-left">
+                            <thead className="bg-[#0d0d0d] border-b border-[#1f1f1f]">
+                               <tr className="text-[8px] font-black uppercase text-[#a1a1aa] tracking-widest">
+                                  <th className="px-8 py-4">Employee</th>
+                                  <th className="px-8 py-4">Current Milestone</th>
+                                  <th className="px-8 py-4 text-center">Stability</th>
+                                  <th className="px-8 py-4 text-right">Uptime</th>
+                               </tr>
+                            </thead>
+                            <tbody className="divide-y divide-[#1f1f1f] text-[10px]">
+                               {paginatedData.map(emp => (
+                                  <tr key={emp.employee_id} className="hover:bg-white/5 transition-colors group">
+                                     <td className="px-8 py-4 font-black text-white">{emp.firstname} {emp.lastname}</td>
+                                     <td className="px-8 py-4 text-[#a1a1aa] font-bold uppercase tracking-tighter">{emp.title}</td>
+                                     <td className="px-8 py-4 text-center">
+                                        <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 text-[8px] font-black">STABLE</span>
+                                     </td>
+                                     <td className="px-8 py-4 text-right font-mono text-[#a1a1aa]">99.9%</td>
+                                  </tr>
+                               ))}
+                            </tbody>
+                         </table>
+                      </div>
+                   </div>
+                </motion.div>
+             )}
 
-function StatCard({ label, value, subValue, trend, isAlert }: { 
-  label: string, value: string | number, subValue: string, trend?: 'up' | 'down', isAlert?: boolean 
-}) {
-  return (
-    <motion.div 
-      whileHover={{ y: -4 }}
-      className={cn(
-        "glass-card rounded-[2.5rem] p-8 relative overflow-hidden group",
-        isAlert && "border-rose-200/50"
-      )}
-    >
-      <p className={cn(
-        "label-mono mb-2",
-        isAlert ? "text-rose-500" : "text-slate-400"
-      )}>
-        {label}
-      </p>
-      <div className="flex items-baseline gap-2">
-        <span className={cn(
-          "text-4xl font-semibold tracking-tight",
-          isAlert ? "text-rose-700 font-bold" : "text-slate-900"
-        )}>
-          {value}
-        </span>
-        {trend && (
-          <span className={cn(
-            "text-[10px] font-bold px-2 py-0.5 rounded-full",
-            trend === 'up' ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
-          )}>
-            {trend === 'up' ? '↑' : '↓'}
-          </span>
-        )}
-      </div>
-      <p className="text-[11px] text-slate-400 mt-2 font-medium">{subValue}</p>
-      
-      {/* Decorative accent */}
-      <div className={cn(
-        "absolute -bottom-8 -right-8 w-24 h-24 rounded-full blur-2xl opacity-10",
-        isAlert ? "bg-rose-500" : "bg-indigo-500"
-      )} />
-    </motion.div>
-  );
-}
+             {activeTab === 'exit' && (
+                <motion.div key="exit" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-8 shadow-2xl">
+                         <h3 className="text-xs font-black uppercase tracking-[0.2em] mb-8 text-[#e11d48]">Critical Offboarding Protocol</h3>
+                         <div className="space-y-3">
+                            <OffboardingItem label="IT System Lockdown" status="Automated" />
+                            <OffboardingItem label="Access Key Revocation" status="Automated" />
+                            <OffboardingItem label="Client Notification Trigger" status="Manual" />
+                            <OffboardingItem label="Knowledge Base Transfer" status="In Progress" />
+                            <OffboardingItem label="Exit Interview Conducted" status="Manual" />
+                         </div>
+                         <button 
+                            onClick={() => triggerToast("Offboarding procedures initialized for selected batch.")}
+                            className="w-full mt-8 py-3 bg-[#e11d48] text-white font-black uppercase tracking-[0.2em] text-[10px] rounded-lg hover:bg-[#f43f5e] transition-all shadow-lg shadow-rose-900/20"
+                         >
+                            Trigger Global Exit Protocol
+                         </button>
+                      </div>
 
-function ProgressItem({ label, value, color }: { label: string, value: number, color: string }) {
-  return (
-    <div>
-      <div className="flex justify-between text-[11px] mb-1.5">
-        <span className="font-medium text-slate-700">{label}</span>
-        <span className="text-slate-400 font-bold">{value}%</span>
-      </div>
-      <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-        <motion.div 
-          initial={{ width: 0 }}
-          animate={{ width: `${value}%` }} 
-          className={cn("h-full rounded-full transition-all duration-1000", color)}
-        ></motion.div>
-      </div>
-    </div>
-  );
-}
-
-function Badge({ status, atRisk }: { status: string, atRisk: boolean }) {
-  const styles = {
-    Cleared: "bg-emerald-50 text-emerald-700 border-emerald-100",
-    Pending: "bg-amber-50 text-amber-700 border-amber-100",
-    'In Progress': "bg-blue-50 text-blue-700 border-blue-100",
-    Overdue: "bg-red-50 text-red-700 border-red-100",
-  }[status] || "bg-slate-50 text-slate-600";
-
-  return (
-    <div className="flex items-center gap-2">
-      <span className={cn("text-[10px] font-bold px-2.5 py-1 rounded-full border", styles)}>
-        {status}
-      </span>
-      {atRisk && <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse shadow-sm shadow-red-500/50"></div>}
-    </div>
-  );
-}
-
-function ModuleBadge({ complete }: { complete: boolean }) {
-  return complete ? (
-    <CheckCircle2 className="w-4 h-4 text-emerald-500 mx-auto" />
-  ) : (
-    <XCircle className="w-4 h-4 text-slate-200 mx-auto" />
-  );
-}
-
-function CheckItem({ label, completed }: { label: string, completed: boolean }) {
-  return (
-    <div className="flex items-center gap-3 text-sm">
-      <div className={cn(
-        "w-5 h-5 rounded border flex items-center justify-center transition-colors",
-        completed ? "bg-emerald-500 border-emerald-500" : "bg-white border-slate-200"
-      )}>
-        {completed && <CheckCircle2 className="w-3 h-3 text-white" />}
-      </div>
-      <span className={cn(completed ? "text-slate-400 line-through" : "text-slate-700")}>{label}</span>
-    </div>
-  );
-}
-
-function FunnelStep({ label, value, progress, color }: { label: string, value: string, progress: string, color: string }) {
-  return (
-    <div className="text-center">
-      <p className="text-[10px] text-slate-400 mb-1 uppercase font-bold tracking-tighter">{label}</p>
-      <p className="text-2xl font-semibold text-slate-800">{value}</p>
-      <div className="h-12 w-1 mx-auto bg-slate-100 mt-2 relative overflow-hidden rounded-full">
-          <div className={cn("absolute top-0 w-full transition-all duration-1000 origin-top", color)} style={{ height: progress }}></div>
-      </div>
-    </div>
-  );
-}
-function AlertItem({ type, message, time, severity }: { type: string, message: string, time: string, severity: 'high' | 'medium' | 'low' }) {
-  return (
-    <div className="flex gap-4 p-4 rounded-xl bg-slate-50 border border-slate-100 relative overflow-hidden group">
-      <div className={cn(
-        "absolute left-0 top-0 w-1 h-full transition-all group-hover:w-1.5",
-        severity === 'high' ? "bg-rose-500" : severity === 'medium' ? "bg-amber-500" : "bg-blue-500"
-      )}></div>
-      <div>
-        <div className="flex items-center gap-2 mb-1">
-          <span className={cn(
-            "text-[9px] font-bold uppercase tracking-widest",
-            severity === 'high' ? "text-rose-600" : "text-slate-500"
-          )}>{type}</span>
-          <span className="text-[9px] text-slate-400 italic">| {time}</span>
+                      <div className="bg-[#0d0d0d] border border-[#e11d48]/30 rounded-xl p-10 flex flex-col items-center justify-center text-center relative overflow-hidden group">
+                         <div className="absolute inset-0 bg-[#e11d48]/5 pointer-events-none group-hover:bg-[#e11d48]/10 transition-all duration-1000"></div>
+                         <AlertTriangle className="w-16 h-16 text-[#e11d48] mb-8 animate-pulse" />
+                         <h2 className="text-2xl font-black uppercase tracking-tighter text-white mb-4 italic">SLA Guard <span className="text-[#e11d48]">Warning</span></h2>
+                         <p className="text-xs font-bold text-[#a1a1aa] uppercase tracking-widest max-w-sm mb-10 leading-relaxed">System has detected 48 unauthorized lifecycle delays. All exit communications must be logged via Secure Client Portal.</p>
+                         <button className="px-8 py-3 border-2 border-[#e11d48] text-[#e11d48] font-black uppercase underline-offset-8 tracking-widest text-[10px] rounded hover:bg-[#e11d48] hover:text-white transition-all shadow-[0_0_20px_rgba(225,29,72,0.1)]">
+                            Review Security Logs
+                         </button>
+                      </div>
+                   </div>
+                </motion.div>
+             )}
+           </AnimatePresence>
+          )}
         </div>
-        <p className="text-[11px] font-medium text-slate-700 leading-tight">{message}</p>
-      </div>
+      </main>
+
+      {/* Notifications Layer */}
+      <AnimatePresence>
+         {toast && (
+            <motion.div 
+               initial={{ y: 100, opacity: 0 }}
+               animate={{ y: 0, opacity: 1 }}
+               exit={{ y: 100, opacity: 0 }}
+               className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[1000] px-8 py-4 bg-[#111111] border border-[#e11d48]/30 rounded-full shadow-2xl flex items-center gap-4 text-white"
+            >
+               <div className="w-2 h-2 rounded-full bg-[#e11d48] animate-pulse"></div>
+               <span className="text-[10px] font-black uppercase tracking-widest">{toast}</span>
+               <button onClick={() => setToast(null)} className="p-1 hover:bg-white/10 rounded-full transition-colors">
+                  <XCircle className="w-4 h-4 text-[#a1a1aa]" />
+               </button>
+            </motion.div>
+         )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+         {showEmailModal && (
+            <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-black/80 backdrop-blur-md">
+               <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-[#111111] w-full max-w-xl rounded-2xl border border-[#1f1f1f] shadow-2xl overflow-hidden">
+                   <div className="p-6 border-b border-[#1f1f1f] bg-[#0d0d0d] flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Mail className="w-4 h-4 text-[#e11d48]" />
+                        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#a1a1aa]">SLA Breach Notification Simulation</span>
+                      </div>
+                      <button onClick={() => setShowEmailModal(false)}><XCircle className="w-5 h-5 text-[#333333] hover:text-[#e11d48] transition-colors" /></button>
+                   </div>
+                   <div className="p-10 space-y-6">
+                      <div className="space-y-4">
+                         <div className="flex border-b border-[#1f1f1f] pb-3">
+                            <span className="w-20 text-[9px] font-black text-[#666666] uppercase">Recipient</span>
+                            <span className="text-[10px] font-bold text-white uppercase italic">Compliance Director</span>
+                         </div>
+                         <div className="flex border-b border-[#1f1f1f] pb-3">
+                            <span className="w-20 text-[9px] font-black text-[#666666] uppercase">Subject</span>
+                            <span className="text-[10px] font-black text-[#e11d48] uppercase tracking-tighter">URGENT — 48 BGV Cases Overdue for Immediate Resolution</span>
+                         </div>
+                      </div>
+                      <div className="bg-[#0a0a0a] p-8 rounded-xl border border-[#1f1f1f] text-[11px] text-[#a1a1aa] leading-relaxed font-bold font-mono">
+                         <p className="mb-4">SYSTEM GENERATED ALERT // OPSCORE CORE MODULE</p>
+                         <p className="mb-4">This is an automated alert from <span className="text-white italic">OpsCore (v.4.2.0)</span>.</p>
+                         <p className="mb-4 text-white uppercase tracking-tighter underline underline-offset-4 decoration-[#e11d48]">Critical Breach Detected:</p>
+                         <ul className="space-y-1 mb-8 text-[#e11d48]">
+                            <li>- Kale Fischer (US Cluster) :: 28 Days Overdue</li>
+                            <li>- Jaslene Harding (US Cluster) :: 27 Days Overdue</li>
+                            <li>- Paula Small (US Cluster) :: 26 Days Overdue</li>
+                            <li>- Uriah Bridges (UK Cluster) :: 23 Days Overdue</li>
+                            <li>- Pedro Harrison (UK Cluster) :: 22 Days Overdue</li>
+                         </ul>
+                         <p className="mb-8 italic opacity-60">Action Required: Coordinate with agency leads (HireRight, Credence) within a 24-hour window to maintain global SLA compliance.</p>
+                         <p className="border-t border-[#1f1f1f] pt-6 uppercase tracking-widest text-[8px] font-black text-[#333333]">Audit ID: 8X-992-DELTA3</p>
+                      </div>
+                      <button 
+                        onClick={() => { triggerToast("Email Alert Protocol Deployed."); setShowEmailModal(false); }}
+                        className="w-full py-4 bg-[#e11d48] text-white font-black uppercase tracking-[0.3em] text-[11px] rounded-lg animate-pulse"
+                      >
+                         DEPLOY NOTIFICATION
+                      </button>
+                   </div>
+               </motion.div>
+            </div>
+         )}
+      </AnimatePresence>
     </div>
   );
+}
+
+// Subcomponents helper
+function NavItem({ label, icon, active, onClick }: { label: string, icon: React.ReactNode, active: boolean, onClick: () => void }) {
+   return (
+      <button 
+         onClick={onClick}
+         className={cn(
+            "w-full flex items-center gap-4 px-5 py-3 rounded-lg transition-all relative overflow-hidden group",
+            active ? "bg-[#111111] text-white border-l-4 border-[#e11d48]" : "text-[#a1a1aa] hover:bg-[#111111] hover:text-white"
+         )}
+      >
+         <span className={cn("transition-transform group-hover:scale-110", active ? "text-[#e11d48]" : "text-[#333333] group-hover:text-white")}>
+            {icon}
+         </span>
+         <span className="text-[10px] font-black uppercase tracking-widest">{label}</span>
+         {active && <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1.5 h-1.5 bg-[#e11d48] rounded-full blur-[2px] mr-2"></div>}
+      </button>
+   );
+}
+
+function StatCard({ label, value, isAlert, severity, color }: { label: string, value: string | number, isAlert?: boolean, severity?: 'critical' | 'warning', color?: string }) {
+   return (
+      <div className={cn(
+         "bg-[#111111] border border-[#1f1f1f] p-6 rounded-xl flex flex-col relative overflow-hidden group hover:border-[#333333] transition-all",
+         severity === 'critical' ? "border-l-2 border-l-[#e11d48] shadow-[0_0_20px_rgba(225,29,72,0.05)]" : severity === 'warning' ? "border-l-2 border-l-amber-600" : ""
+      )}>
+         <p className={cn(
+            "text-[8px] font-black uppercase tracking-[0.2em] mb-4 opacity-60",
+            severity === 'critical' ? "text-[#e11d48]" : ""
+         )}>{label}</p>
+         <div className="flex items-center justify-between">
+            <span className={cn("text-4xl font-black text-white tracking-tighter", color)}>{value}</span>
+         </div>
+         {severity === 'critical' && (
+            <div className="absolute top-0 right-0 w-16 h-16 bg-[#e11d48]/5 rounded-bl-full pointer-events-none"></div>
+         )}
+      </div>
+   );
+}
+
+function PipelineStage({ label, status, delay, icon }: { label: string, status: 'clear' | 'risk' | 'critical', delay: string, icon: React.ReactNode }) {
+   const colors = {
+      clear: "bg-[#1a1a1a] text-[#333333] border-[#1f1f1f]",
+      risk: "bg-amber-500/10 text-amber-500 border-amber-500/20",
+      critical: "bg-[#e11d48]/10 text-[#e11d48] border-[#e11d48]/20"
+   };
+
+   return (
+      <div className="flex flex-col items-center gap-4 group relative z-10 w-24">
+         <div className={cn(
+            "w-12 h-12 rounded-full border-2 flex items-center justify-center transition-all group-hover:scale-110 shadow-lg",
+            colors[status]
+         )}>
+            {icon}
+         </div>
+         <div className="text-center">
+            <p className="text-[9px] font-black text-white uppercase tracking-tighter leading-tight">{label}</p>
+            <p className={cn(
+               "text-[8px] font-mono font-bold mt-2",
+               status === 'clear' ? "text-[#333333]" : status === 'risk' ? "text-amber-500" : "text-[#e11d48]"
+            )}>{delay}</p>
+         </div>
+      </div>
+   );
+}
+
+function StatusBadge({ status }: { status: string }) {
+   const styles = {
+      Overdue: "bg-[#e11d48] text-white",
+      Pending: "bg-amber-900/40 text-amber-500 border border-amber-500/20",
+      Cleared: "bg-emerald-900/40 text-emerald-500 border border-emerald-500/20",
+      'In Progress': "bg-[#1a1a1a] text-[#666666] border border-[#1f1f1f]"
+   }[status] || "bg-[#1a1a1a] text-[#a1a1aa]";
+
+   return (
+      <span className={cn("inline-flex px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest", styles)}>
+         {status}
+      </span>
+   );
+}
+
+function RiskBadge({ risk }: { risk: string }) {
+   const styles = {
+      'High Risk': "text-[#e11d48] bg-[#e11d48]/10 border border-[#e11d48]/20",
+      'Medium Risk': "text-white bg-white/5 border border-white/10",
+      'Low Risk': "text-[#a1a1aa] bg-[#1a1a1a] border border-[#1f1f1f]"
+   }[risk] || "text-[#a1a1aa] bg-[#1a1a1a] border border-[#1f1f1f]";
+
+   return (
+      <span className={cn("inline-flex px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest", styles)}>
+         {risk}
+      </span>
+   );
+}
+
+function AlertItem({ type, message, severity }: { type: string, message: string, severity: 'high' | 'medium' | 'low' }) {
+   return (
+      <div className="p-4 bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg transition-all hover:border-[#333333] group relative overflow-hidden">
+         <div className={cn(
+            "absolute left-0 top-0 w-1 h-full",
+            severity === 'high' ? "bg-[#e11d48]" : severity === 'medium' ? "bg-amber-500" : "bg-white/10"
+         )}></div>
+         <p className={cn("text-[8px] font-black uppercase tracking-widest mb-1", 
+            severity === 'high' ? "text-[#e11d48]" : severity === 'medium' ? "text-amber-500" : "text-[#a1a1aa]"
+         )}>{type}</p>
+         <p className="text-[10px] font-bold text-white group-hover:text-[#e11d48] transition-colors">{message}</p>
+      </div>
+   );
+}
+
+function OwnerRow({ risk, owner }: { risk: string, owner: string }) {
+   return (
+      <div className="flex items-center justify-between p-4 bg-[#111111] hover:bg-white/5 border border-[#1f1f1f] rounded-lg group transition-all cursor-pointer">
+         <div>
+            <p className="text-[8px] font-black text-[#a1a1aa] uppercase tracking-[0.2em] mb-1 opacity-60 font-bold">{risk}</p>
+            <p className="text-[10px] font-black uppercase text-white group-hover:text-[#e11d48] transition-colors tracking-tight italic">{owner}</p>
+         </div>
+         <ArrowUpRight className="w-3.5 h-3.5 text-[#333333] group-hover:text-[#e11d48] transition-all group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+      </div>
+   );
+}
+
+function FunnelMetric({ label, value, color }: { label: string, value: string, color: string }) {
+   return (
+      <div className="text-center">
+         <p className="text-[9px] font-black uppercase text-[#a1a1aa] tracking-widest mb-3">{label}</p>
+         <p className={cn("text-4xl font-black tracking-tighter leading-none italic", color)}>{value}</p>
+      </div>
+   );
+}
+
+function LegendItem({ label, color, value }: { label: string, color: string, value: string }) {
+   return (
+      <div className="flex items-center justify-between group">
+         <div className="flex items-center gap-2">
+            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }}></div>
+            <span className="text-[10px] font-black uppercase text-[#a1a1aa] group-hover:text-white transition-colors">{label}</span>
+         </div>
+         <span className="text-[10px] font-mono font-bold text-white">{value}</span>
+      </div>
+   );
+}
+
+function OffboardingItem({ label, status }: { label: string, status: string }) {
+   return (
+      <div className="flex items-center justify-between p-4 bg-[#0a0a0a] rounded border border-[#1f1f1f] transition-all hover:bg-[#1a1a1a]">
+         <span className="text-[10px] font-black text-white uppercase tracking-tighter italic">{label}</span>
+         <span className={cn(
+            "px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest",
+            status === 'Automated' ? "bg-emerald-500/10 text-emerald-500" :
+            status === 'In Progress' ? "bg-[#e11d48]/10 text-[#e11d48]" :
+            "text-[#a1a1aa] bg-[#1a1a1a]"
+         )}>{status}</span>
+      </div>
+   );
+}
+
+function CategorySection({ label, items }: { label: string, items: string[] }) {
+   return (
+      <div>
+         <h4 className="text-[10px] font-black uppercase text-[#333333] tracking-[0.2em] mb-4 border-b border-[#1f1f1f] pb-2">{label}</h4>
+         <ul className="space-y-3">
+            {items.map(item => (
+               <li key={item} className="flex items-center gap-3">
+                  <div className="w-3 h-3 rounded flex items-center justify-center border border-[#1f1f1f] bg-[#0a0a0a]">
+                     <div className="w-1 h-1 rounded-full bg-[#333333]"></div>
+                  </div>
+                  <span className="text-[10px] font-black uppercase text-[#a1a1aa] hover:text-[#e11d48] transition-colors cursor-pointer">{item}</span>
+               </li>
+            ))}
+         </ul>
+      </div>
+   );
 }
 

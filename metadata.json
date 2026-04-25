@@ -1,6 +1,6 @@
 {
-  "name": "Pulse: Global Lifecycle Dashboard",
-  "description": "A unified platform for tracking employee lifecycle stages, BGV compliance, and training milestones across global teams.",
+  "name": "OpsCore: Global HR Operations",
+  "description": "Unified dashboard for global employee lifecycle management, BGV compliance, and high-risk performance tracking.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

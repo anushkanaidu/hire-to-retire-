@@ -21,12 +21,12 @@ export interface Employee {
   years_of_experience: number;
   desired_salary: number;
   job_title: string;
-  recruitment_status: RecruitmentStatus;
+  recruitment_status: string;
   survey_date: string;
   engagement_score: number;
   satisfaction_score: number;
-  work_life_balance_score: number;
-  flight_risk: 'Low Risk' | 'Medium Risk' | 'High Risk';
+  'work-life_balance_score': number;
+  flight_risk: string;
   country: Country;
   bgv_agency: string;
   bgv_status: BGVStatus;
@@ -46,4 +46,8 @@ export interface Employee {
   onboarding_complete: 'Yes' | 'No';
   modules_completed: number;
   compliance_pct: number;
+  total_trainings: number;
+  completed_trainings: number;
+  passed_trainings: number;
+  failed_trainings: number;
 }
