@@ -1,55 +1,48 @@
 # OpsCore — HR Operations Intelligence Dashboard
 
-> End-to-end employee lifecycle visibility with AI-powered risk detection and automated alerts.
+A real-time HR dashboard I built to track the full employee lifecycle, from hiring to offboarding, with AI-powered risk detection and automated alerts.
 
 [opscore-dashboard.netlify.app](https://opscore-dashboard.netlify.app)
 
 ---
 
+## About the project
+
+I built this as a first-year MS Data Science student after receiving a real HR operations brief. The goal was to solve a genuine problem: HR teams had no single view of what was happening across hiring, onboarding, compliance, and exits.
+
+The dashboard tracks 500 employees across 5 pages, automatically flags risks, assigns named owners, and triggers actions — no manual chasing required.
+
+---
+
 ## What it does
 
-OpsCore gives HR and operations teams a single real-time view across the full employee lifecycle — from hiring pipeline to offboarding — with automatic risk flags and named owners for every breach.
-
-| Module | What it tracks |
+| Page | What it shows |
 |---|---|
-| **Overview** | 500 employees · BGV status · compliance % · flight risk — filterable by region |
-| **Hiring Pipeline** | Candidate funnel with SLA aging · US optimal · UK at risk · Singapore breach |
-| **Compliance Hub** | Every employee × every training module · one-click Send Reminder |
-| **Production Logs** | Flight risk by region · active employee status · AI Academy pilot engagement |
-| **Exit Workflow** | Offboarding checklist · security audit log · 48 delayed exits flagged |
-
----
-
-## Key metrics (from 500-employee dataset)
-
-- **52** BGV overdue — SLA breached
-- **157** BGV at risk — needs action
-- **206** high flight risk employees
-- **50.3%** average compliance (target: 85%)
-
----
-
-## Risk routing
-
-Every risk has a named owner and an automated action — no manual triage needed.
-
-| Risk | Owner | Action |
-|---|---|---|
-| BGV overdue (SLA breach) | Compliance Director | Automated alert email to agency |
-| High flight risk (satisfaction < 3) | BU Managing Director | Stay interview within 48 hours |
-| Training module incomplete | L&D Manager | Send Reminder from dashboard |
-| Onboarding incomplete >21 days | HR Business Partner | Audit Day 0 blockers |
-| Exit — access still active after LWD | IT / Ops Lead | Trigger Global Exit Protocol |
+| Overview | BGV status · compliance % · flight risk by region |
+| Hiring Pipeline | Candidate funnel with SLA aging by country |
+| Compliance Hub | Per-employee training completion · one-click reminders |
+| Production Logs | Flight risk · employee status · AI Academy engagement |
+| Exit Workflow | Offboarding checklist · security audit · delayed exits |
 
 ---
 
 ## Tech stack
 
 - **Frontend:** React + TypeScript + Vite
-- **AI layer:** Google AI Studio (Gemini) + Anthropic Claude — risk logic design, data architecture, code generation, and automated alert drafting
-- **Data:** Real Kaggle HR dataset (3,000 employees) cleaned to a 500-row, 47-column master file
-- **Deployment:** GitHub → Netlify (CI/CD)
-- **Export:** PDF report generation
+- **Styling:** Tailwind CSS + custom dark theme
+- **AI:** Google AI Studio (Gemini) + Claude
+- **Data:** Kaggle HR dataset cleaned to 500 rows, 47 columns using Python
+- **Deployment:** Netlify
+
+---
+
+## How I built it
+
+1. Read the brief and mapped out 9 employee lifecycle stages
+2. Found a real Kaggle HR dataset (3,000 employees) and cleaned it in Python
+3. Used Claude and Gemini AI to design the risk logic, data architecture, and alert system
+4. Built the dashboard in React + TypeScript with 5 pages and region filters
+5. Deployed via GitHub → Netlify
 
 ---
 
@@ -58,22 +51,15 @@ Every risk has a named owner and an automated action — no manual triage needed
 **Prerequisites:** Node.js 18+
 
 ```bash
-# 1. Clone the repo
 git clone https://github.com/anushkanaidu/hire-to-retire-.git
 cd hire-to-retire-
-
-# 2. Install dependencies
 npm install
-
-# 3. Add your Gemini API key
 cp .env.example .env.local
-# Edit .env.local and set GEMINI_API_KEY=your_key_here
-
-# 4. Start the dev server
+# Add your GEMINI_API_KEY to .env.local
 npm run dev
 ```
 
-Then open [http://localhost:5173](http://localhost:5173)
+Then open http://localhost:5173
 
 ---
 
@@ -81,29 +67,28 @@ Then open [http://localhost:5173](http://localhost:5173)
 
 ```
 src/
-├── components/       # Reusable UI components
-├── pages/            # Dashboard pages (Overview, Hiring, Compliance, Logs, Exit)
-├── data/             # Cleaned HR dataset (CSV)
-└── lib/              # AI Studio integration, PDF export
+├── data/mockData.ts       # 500-employee HR dataset
+├── lib/utils.ts           # Tailwind helpers
+├── services/gemini.ts     # Gemini AI integration
+├── App.tsx                # All dashboard pages
+├── types.ts               # TypeScript types
+└── index.css              # Global styles + dark theme
 ```
 
 ---
 
-## Roadmap
+## What I'd improve next
 
-- [ ] Connect Google Sheets as live data source
-- [ ] HireRight / Credence BGV API integration
-- [ ] LMS integration for real training completion data
-- [ ] Deploy to private GCP environment with access controls
-- [ ] Add RAG layer for natural language HR policy queries
+- [ ] Connect to live Google Sheets instead of CSV
+- [ ] Real BGV API integration (HireRight / Credence)
+- [ ] Split App.tsx into separate page components
+- [ ] Add a RAG layer for natural language HR policy queries
 
 ---
 
 ## Built by
 
 **Anushka Naidu** — MS Data Science, Seattle University  
-[GitHub](https://github.com/anushkanaidu) · [LinkedIn](https://linkedin.com/in/anushkanaidu)
+[GitHub](https://github.com/anushkanaidu) · [LinkedIn](www.linkedin.com/in/anushka-naidu-maddisetty-24b146204)
 
----
-
-> *Built as a prototype from a real HR operations brief. Data architecture, risk logic, and interface are production-ready. BGV SLA thresholds and training module definitions are based on the original brief and can be updated to match any organisation's SOPs.*
+> *Note: This is a prototype built from a real HR brief. The data architecture and risk logic are solid but BGV SLA thresholds and training modules would need to be updated to match a real organisation's SOPs.*
