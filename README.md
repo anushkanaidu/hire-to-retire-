@@ -41,7 +41,7 @@ The dashboard tracks 500 employees across 5 pages, automatically flags risks, as
 1. Read the brief and mapped out 9 employee lifecycle stages
 2. Found a real Kaggle HR dataset (3,000 employees) and cleaned it in Python
 3. Used Claude and Gemini AI to design the risk logic, data architecture, and alert system
-4. Built the dashboard in React + TypeScript with 5 pages and region filters
+4. Google AI Studio scaffolded the React + TypeScript + Vite + Tailwind boilerplate — I built the 5 dashboard pages, risk logic, compliance tracking, and region filters on top of it
 5. Deployed via GitHub → Netlify
 
 ---
