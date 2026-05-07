@@ -2,11 +2,7 @@
 
 > End-to-end employee lifecycle visibility with AI-powered risk detection and automated alerts.
 
-**🔴 Live Demo → [opscore-dashboard.netlify.app](https://opscore-dashboard.netlify.app)**
-
----
-
-![OpsCore Dashboard](./public/banner.png)
+[opscore-dashboard.netlify.app](https://opscore-dashboard.netlify.app)
 
 ---
 
